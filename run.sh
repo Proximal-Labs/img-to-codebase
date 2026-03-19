@@ -14,7 +14,7 @@ fi
 
 echo "=== Step 1: Install dependencies ==="
 pip install -r requirements.txt
-pip install -e /path/to/tinker-cookbook  # or: pip install tinker-cookbook
+pip install tinker-cookbook
 playwright install chromium
 
 echo ""
