@@ -59,7 +59,7 @@ def main():
         sampling_client = training_client.save_weights_and_get_sampling_client()
 
     sampling_params = types.SamplingParams(
-        max_tokens=512,
+        max_tokens=1024,
         stop=renderer.get_stop_sequences(),
         temperature=0.3,
     )
