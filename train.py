@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 MODEL = "Qwen/Qwen3.5-4B"
 BATCH_SIZE = 8          # screenshots per batch
 GROUP_SIZE = 4          # rollouts per screenshot
+MAX_BATCHES = int(os.environ.get("MAX_BATCHES", 0))  # 0 = all batches
 LR = 4e-5
 LORA_RANK = 32
 MAX_TOKENS = 1024       # enough for web-sourced HTML snippets
@@ -83,6 +84,8 @@ def main():
     # Load dataset
     dataset = load_dataset(MANIFEST_PATH)
     n_batches = len(dataset) // BATCH_SIZE
+    if MAX_BATCHES > 0:
+        n_batches = min(n_batches, MAX_BATCHES)
     logger.info(f"Loaded {len(dataset)} examples, {n_batches} batches")
 
     # Setup tokenizer + renderer (VLM needs image_processor)
@@ -91,8 +94,8 @@ def main():
     tokenizer = get_tokenizer(MODEL)
     renderer_name = "qwen3_5_disable_thinking"
 
-    from tinker_cookbook.image_processing_utils import get_image_processor
-    image_processor = get_image_processor(MODEL)
+    from transformers import AutoImageProcessor
+    image_processor = AutoImageProcessor.from_pretrained(MODEL, use_fast=True)
     renderer = renderers.get_renderer(renderer_name, tokenizer, image_processor=image_processor)
     logger.info(f"Using renderer: {renderer_name}")
 

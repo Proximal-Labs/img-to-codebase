@@ -17,7 +17,7 @@ from PIL import Image
 from tinker_cookbook import model_info, renderers
 from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
-from tinker_cookbook.image_processing_utils import get_image_processor
+from transformers import AutoImageProcessor
 from reward import extract_html_from_response
 
 MODEL = "Qwen/Qwen3.5-4B"
@@ -44,7 +44,7 @@ def main():
 
     tokenizer = get_tokenizer(MODEL)
     renderer_name = "qwen3_5_disable_thinking"
-    image_processor = get_image_processor(MODEL)
+    image_processor = AutoImageProcessor.from_pretrained(MODEL, use_fast=True)
     renderer = renderers.get_renderer(renderer_name, tokenizer, image_processor=image_processor)
 
     service_client = tinker.ServiceClient()
