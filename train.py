@@ -288,17 +288,112 @@ def main():
         metrics_file.write(json.dumps(metrics) + "\n")
         metrics_file.flush()
 
-    # ── Cleanup ───────────────────────────────────────────────────────────
-    browser.close()
-    pw.stop()
     metrics_file.close()
 
     # Save final checkpoint + weights
     logger.info("Saving final checkpoint...")
     training_client.save_state(name="final").result()
-    final_client = training_client.save_weights_and_get_sampling_client(name="prox-final")
-    logger.info("Final model saved")
+    # Save with explicit path for later reuse
+    save_result = training_client.save_weights_for_sampler(name="prox-final").result()
+    model_path = save_result.path
+    rl_sampler = service_client.create_sampling_client(model_path=model_path)
+    logger.info(f"Final model saved at: {model_path}")
     logger.info("Training complete!")
+
+    # Write model path to file for easy reference
+    with open(os.path.join(LOG_DIR, "model_path.txt"), "w") as f:
+        f.write(model_path)
+
+    # ── Eval: compare base vs RL on held-out examples ─────────────────────
+    N_EVAL = int(os.environ.get("N_EVAL", 10))
+    if N_EVAL <= 0:
+        browser.close()
+        pw.stop()
+        return
+
+    import random
+    random.seed(42)
+
+    logger.info(f"\nRunning eval on {N_EVAL} held-out examples...")
+
+    # Base model (fresh untrained LoRA)
+    base_client = service_client.create_lora_training_client(base_model=MODEL, rank=LORA_RANK)
+    base_sampler = base_client.save_weights_and_get_sampling_client()
+
+    eval_params = types.SamplingParams(
+        max_tokens=MAX_TOKENS, stop=renderer.get_stop_sequences(), temperature=0.3,
+    )
+
+    # Use examples not in training set
+    eval_pool = dataset[n_batches * BATCH_SIZE:]
+    if len(eval_pool) < N_EVAL:
+        eval_pool = dataset
+    eval_samples = random.sample(eval_pool, min(N_EVAL, len(eval_pool)))
+
+    base_rewards, rl_rewards = [], []
+    eval_results = []
+
+    for i, item in enumerate(eval_samples):
+        prompt = build_prompt(renderer, item["screenshot"])
+        ref_img = load_reference_image(item["screenshot"], size=IMG_SIZE)
+        page = reward_pages[i % len(reward_pages)]
+
+        # Base
+        base_result = base_sampler.sample(prompt=prompt, num_samples=1, sampling_params=eval_params).result()
+        base_parsed, _ = renderer.parse_response(base_result.sequences[0].tokens)
+        base_html = extract_html_from_response(get_text_content(base_parsed))
+        base_reward = compute_visual_reward(base_html, ref_img, page)
+
+        # RL
+        rl_result = rl_sampler.sample(prompt=prompt, num_samples=1, sampling_params=eval_params).result()
+        rl_parsed, _ = renderer.parse_response(rl_result.sequences[0].tokens)
+        rl_html = extract_html_from_response(get_text_content(rl_parsed))
+        rl_reward = compute_visual_reward(rl_html, ref_img, page)
+
+        base_rewards.append(base_reward)
+        rl_rewards.append(rl_reward)
+        eval_results.append({
+            "screenshot": item["screenshot"],
+            "base_reward": round(base_reward, 4),
+            "rl_reward": round(rl_reward, 4),
+            "base_html": base_html,
+            "rl_html": rl_html,
+        })
+
+        delta = rl_reward - base_reward
+        logger.info(f"  Eval {i+1}/{N_EVAL}: base={base_reward:.3f} rl={rl_reward:.3f} delta={delta:+.3f}")
+
+    # Summary
+    avg_base = float(np.mean(base_rewards))
+    avg_rl = float(np.mean(rl_rewards))
+    wins = sum(1 for b, r in zip(base_rewards, rl_rewards) if r > b)
+
+    logger.info(f"\n{'='*60}")
+    logger.info("EVAL SUMMARY")
+    logger.info(f"{'='*60}")
+    logger.info(f"  Base avg reward: {avg_base:.3f}")
+    logger.info(f"  RL   avg reward: {avg_rl:.3f}")
+    logger.info(f"  Improvement:     {avg_rl - avg_base:+.3f}")
+    logger.info(f"  RL wins: {wins}/{N_EVAL}")
+
+    # Save eval results
+    eval_dir = os.path.join(os.path.dirname(__file__), "eval_output")
+    os.makedirs(eval_dir, exist_ok=True)
+    eval_summary = {
+        "base_mean": round(avg_base, 4),
+        "rl_mean": round(avg_rl, 4),
+        "improvement": round(avg_rl - avg_base, 4),
+        "rl_wins": wins,
+        "n_eval": N_EVAL,
+        "n_train_batches": n_batches,
+        "results": eval_results,
+    }
+    with open(os.path.join(eval_dir, "eval_comparison.json"), "w") as f:
+        json.dump(eval_summary, f, indent=2)
+    logger.info(f"  Saved to {eval_dir}/eval_comparison.json")
+
+    browser.close()
+    pw.stop()
 
 
 if __name__ == "__main__":
