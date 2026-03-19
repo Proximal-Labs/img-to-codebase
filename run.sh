@@ -22,9 +22,5 @@ echo "=== Step 2: Generate dataset ==="
 python generate_dataset_web.py
 
 echo ""
-echo "=== Step 3: Train ==="
+echo "=== Step 3: Train + Eval ==="
 python train.py
-
-echo ""
-echo "=== Step 4: Eval ==="
-python eval.py
