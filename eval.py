@@ -61,6 +61,8 @@ def main():
     parser.add_argument("--n", type=int, default=10, help="Number of eval examples")
     parser.add_argument("--model_path", type=str, default=None, help="Tinker model path for RL weights")
     parser.add_argument("--base_only", action="store_true", help="Only eval base model")
+    parser.add_argument("--name", type=str, default=None,
+                        help="Eval name (creates eval_output/<name>/). Default: timestamp.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     args = parser.parse_args()
 
@@ -98,7 +100,12 @@ def main():
     reward_pages = [browser.new_page(viewport={"width": VIEWPORT_W, "height": VIEWPORT_H}) for _ in range(8)]
     render_page = browser.new_page(viewport={"width": VIEWPORT_W, "height": VIEWPORT_H})
 
-    os.makedirs(EVAL_DIR, exist_ok=True)
+    # Create named eval directory
+    from datetime import datetime
+    eval_name = args.name or datetime.now().strftime("%Y%m%d_%H%M%S")
+    eval_dir = os.path.join(EVAL_DIR, eval_name)
+    os.makedirs(eval_dir, exist_ok=True)
+    log(f"Eval output dir: {eval_dir}")
 
     # Models
     log("\nCreating base model (untrained LoRA)...")
@@ -114,7 +121,7 @@ def main():
     base_rewards, rl_rewards = [], []
 
     for i, item in enumerate(samples):
-        example_dir = os.path.join(EVAL_DIR, f"example_{i:02d}")
+        example_dir = os.path.join(eval_dir, f"example_{i:02d}")
         os.makedirs(example_dir, exist_ok=True)
 
         ref_img = load_reference_image(item["screenshot"], size=IMG_SIZE)
@@ -185,10 +192,10 @@ def main():
             "rl_model_path": rl_model_path,
         })
 
-    with open(os.path.join(EVAL_DIR, "eval_comparison.json"), "w") as f:
+    with open(os.path.join(eval_dir, "eval_comparison.json"), "w") as f:
         json.dump(summary, f, indent=2)
 
-    log(f"\nOutputs saved to {EVAL_DIR}/")
+    log(f"\nOutputs saved to {eval_dir}/")
 
     browser.close()
     pw.stop()

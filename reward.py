@@ -1,22 +1,20 @@
 """
 Multi-signal reward function for screenshot-to-HTML RL.
 
-Combines DOM-level signals (block matching, text, color, font) with
-image-level signals (CLIP perceptual similarity, SSIM pixel similarity).
+Designed to be smoothly climbable — each signal degrades gracefully
+rather than cliff-edging on mismatches.
 
-Reward weights:
-  0.20 - block position (IoU of matched DOM elements)
-  0.20 - text content (fuzzy string match)
-  0.10 - background color match
-  0.05 - text color match
-  0.05 - font family match
-  0.05 - font size match
-  0.20 - CLIP similarity (perceptual)
-  0.15 - visual SSIM+MSE (pixel-level)
+Reward signals:
+  0.25 - CLIP perceptual similarity (smooth anchor)
+  0.25 - global text content match (all visible text compared)
+  0.20 - layout / block position matching (meaningful elements only)
+  0.15 - color palette similarity (dominant colors)
+  0.15 - visual SSIM (pixel-level)
 """
 
 import io
 import re
+from collections import Counter
 from difflib import SequenceMatcher
 
 import numpy as np
@@ -31,7 +29,7 @@ from config import VIEWPORT_W, VIEWPORT_H
 # ── HTML extraction ───────────────────────────────────────────────────────────
 
 def extract_html_from_response(text: str) -> str | None:
-    """Extract HTML from a model response, handling thinking blocks and various formats."""
+    """Extract HTML from a model response."""
     match = re.search(r"```html\s*(.*?)```", text, re.DOTALL)
     if match:
         return match.group(1).strip()
@@ -88,7 +86,6 @@ def render_html_to_image(page: Page, html_snippet: str, size: int = 256) -> np.n
 
 
 def render_html_to_file(page: Page, html_snippet: str | None, save_path: str, full_page: bool = True) -> bool:
-    """Render HTML to a screenshot file. full_page=True captures entire scrollable content."""
     if html_snippet is None:
         Image.new("RGB", (VIEWPORT_W, VIEWPORT_H), (240, 240, 240)).save(save_path)
         return False
@@ -114,7 +111,6 @@ _clip_preprocess = None
 
 
 def _get_clip():
-    """Lazy-load CLIP model (cached)."""
     global _clip_model, _clip_preprocess
     if _clip_model is None:
         import open_clip
@@ -128,127 +124,113 @@ def _get_clip():
 
 
 def clip_similarity(img_a: np.ndarray, img_b: np.ndarray) -> float:
-    """Compute CLIP cosine similarity between two images (numpy arrays)."""
     model, preprocess = _get_clip()
-    pil_a = Image.fromarray(img_a)
-    pil_b = Image.fromarray(img_b)
-
     with torch.no_grad():
-        tensor_a = preprocess(pil_a).unsqueeze(0)
-        tensor_b = preprocess(pil_b).unsqueeze(0)
+        tensor_a = preprocess(Image.fromarray(img_a)).unsqueeze(0)
+        tensor_b = preprocess(Image.fromarray(img_b)).unsqueeze(0)
         feat_a = model.encode_image(tensor_a)
         feat_b = model.encode_image(tensor_b)
         feat_a = feat_a / feat_a.norm(dim=-1, keepdim=True)
         feat_b = feat_b / feat_b.norm(dim=-1, keepdim=True)
         sim = (feat_a @ feat_b.T).item()
+    # CLIP cosine sim is usually 0.5-1.0 range; normalize to 0-1
+    return float(max(0.0, (sim - 0.5) * 2.0))
 
-    return float(sim)
+
+# ── Global text comparison ───────────────────────────────────────────────────
+
+def _extract_visible_text(page: Page) -> str:
+    """Extract all visible text from the rendered page."""
+    return page.evaluate("""() => {
+        return document.body ? document.body.innerText.trim() : '';
+    }""")
 
 
-# ── DOM block extraction ─────────────────────────────────────────────────────
+def text_similarity(ref_text: str, gen_text: str) -> float:
+    """Global fuzzy text similarity. Smooth: partial matches score partial credit."""
+    if not ref_text and not gen_text:
+        return 1.0
+    if not ref_text or not gen_text:
+        return 0.0
+    return SequenceMatcher(None, ref_text.lower(), gen_text.lower()).ratio()
 
-def extract_dom_blocks(page: Page) -> list[dict]:
-    """Extract visible DOM elements with bounding boxes and computed styles."""
-    blocks = page.evaluate("""() => {
+
+# ── Layout / block matching ──────────────────────────────────────────────────
+
+MEANINGFUL_TAGS = {
+    "h1", "h2", "h3", "h4", "h5", "h6", "p", "a", "button", "input",
+    "img", "nav", "header", "footer", "main", "section", "article",
+    "li", "td", "th", "label", "span", "textarea", "select",
+}
+
+
+def _extract_meaningful_blocks(page: Page) -> list[dict]:
+    """Extract only visually meaningful DOM elements (not wrapper divs)."""
+    tags_list = list(MEANINGFUL_TAGS)
+    blocks = page.evaluate("""(tagsList) => {
+        const meaningfulTags = new Set(tagsList);
         const blocks = [];
         const els = document.querySelectorAll('*');
         for (const el of els) {
             const rect = el.getBoundingClientRect();
             if (rect.width < 5 || rect.height < 5) continue;
-            if (rect.width >= window.innerWidth && rect.height >= window.innerHeight) continue;
+            if (rect.width >= window.innerWidth * 0.99 && rect.height >= window.innerHeight * 0.99) continue;
 
+            const tag = el.tagName.toLowerCase();
             const style = getComputedStyle(el);
-            const text = el.innerText || '';
-            // Only take direct text, not from children
+            const hasBg = style.backgroundColor !== 'rgba(0, 0, 0, 0)' && style.backgroundColor !== 'transparent';
+            const hasBorder = style.borderWidth && style.borderWidth !== '0px';
+
             let directText = '';
             for (const node of el.childNodes) {
                 if (node.nodeType === Node.TEXT_NODE) {
                     directText += node.textContent;
                 }
             }
+            directText = directText.trim();
+
+            const isMeaningful = meaningfulTags.has(tag) || directText.length > 0 || hasBg || hasBorder;
+            if (!isMeaningful) continue;
 
             blocks.push({
-                tag: el.tagName.toLowerCase(),
+                tag: tag,
                 x: rect.x,
                 y: rect.y,
                 w: rect.width,
                 h: rect.height,
-                bgColor: style.backgroundColor,
-                color: style.color,
-                fontFamily: style.fontFamily,
-                fontSize: parseFloat(style.fontSize) || 0,
-                text: directText.trim().substring(0, 200),
-                fullText: text.trim().substring(0, 500),
+                text: directText.substring(0, 200),
             });
         }
         return blocks;
-    }""")
+    }""", tags_list)
     return blocks
 
 
-# ── Block matching ────────────────────────────────────────────────────────────
-
 def _iou(a: dict, b: dict) -> float:
-    """Intersection over Union of two bounding boxes."""
     x1 = max(a["x"], b["x"])
     y1 = max(a["y"], b["y"])
     x2 = min(a["x"] + a["w"], b["x"] + b["w"])
     y2 = min(a["y"] + a["h"], b["y"] + b["h"])
-
     inter = max(0, x2 - x1) * max(0, y2 - y1)
-    area_a = a["w"] * a["h"]
-    area_b = b["w"] * b["h"]
-    union = area_a + area_b - inter
-
+    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
     return inter / union if union > 0 else 0.0
 
 
-def _parse_color(color_str: str) -> tuple[int, int, int] | None:
-    """Parse CSS color string like 'rgb(255, 0, 0)' or 'rgba(...)' to RGB tuple."""
-    match = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", color_str)
-    if match:
-        return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
-    return None
+def layout_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
+    """
+    Smooth layout matching score.
 
-
-def _color_distance(c1: tuple[int, int, int] | None, c2: tuple[int, int, int] | None) -> float:
-    """Normalized color distance (0 = identical, 1 = maximally different)."""
-    if c1 is None or c2 is None:
+    For each ref block, find best matching gen block by IoU.
+    Score = average of best IoUs, with a soft penalty for count mismatch.
+    No harsh match_ratio multiplier.
+    """
+    if not ref_blocks and not gen_blocks:
         return 1.0
-    dist = sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5
-    max_dist = (255**2 * 3) ** 0.5  # ~441
-    return dist / max_dist
-
-
-def _text_similarity(a: str, b: str) -> float:
-    """Fuzzy text similarity (0-1)."""
-    if not a and not b:
-        return 1.0
-    if not a or not b:
+    if not ref_blocks or not gen_blocks:
         return 0.0
-    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
 
-
-def match_blocks(ref_blocks: list[dict], gen_blocks: list[dict]) -> dict:
-    """
-    Match DOM blocks and compute per-signal scores.
-
-    Returns dict with scores for: position, text, bg_color, text_color, font_family, font_size.
-    All scores are in [0, 1].
-    """
-    if not ref_blocks:
-        return {
-            "position": 1.0 if not gen_blocks else 0.5,
-            "text": 1.0 if not gen_blocks else 0.5,
-            "bg_color": 1.0 if not gen_blocks else 0.5,
-            "text_color": 1.0 if not gen_blocks else 0.5,
-            "font_family": 1.0 if not gen_blocks else 0.5,
-            "font_size": 1.0 if not gen_blocks else 0.5,
-        }
-
-    # Greedy matching: for each ref block, find best gen block by IoU
     used_gen = set()
-    matches = []
+    ious = []
 
     for ref in ref_blocks:
         best_iou = 0.0
@@ -261,75 +243,74 @@ def match_blocks(ref_blocks: list[dict], gen_blocks: list[dict]) -> dict:
                 best_iou = score
                 best_idx = j
 
-        if best_idx >= 0 and best_iou > 0.05:  # minimum IoU threshold
-            matches.append((ref, gen_blocks[best_idx], best_iou))
+        ious.append(best_iou)
+        if best_idx >= 0 and best_iou > 0.05:
             used_gen.add(best_idx)
 
-    n_ref = len(ref_blocks)
-    match_ratio = len(matches) / n_ref if n_ref > 0 else 0.0
+    avg_iou = sum(ious) / len(ious)
 
-    if not matches:
-        return {
-            "position": 0.0,
-            "text": 0.0,
-            "bg_color": 0.0,
-            "text_color": 0.0,
-            "font_family": 0.0,
-            "font_size": 0.0,
+    # Soft penalty for count mismatch (not multiplicative)
+    count_ratio = min(len(ref_blocks), len(gen_blocks)) / max(len(ref_blocks), len(gen_blocks))
+    count_penalty = 0.5 + 0.5 * count_ratio  # ranges from 0.5 to 1.0
+
+    return float(avg_iou * count_penalty)
+
+
+# ── Color palette similarity ─────────────────────────────────────────────────
+
+def _extract_colors(page: Page) -> list[tuple[int, int, int]]:
+    """Extract background colors of visible elements."""
+    colors = page.evaluate("""() => {
+        const colors = [];
+        const els = document.querySelectorAll('*');
+        for (const el of els) {
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 10 || rect.height < 10) continue;
+            const style = getComputedStyle(el);
+            const bg = style.backgroundColor;
+            if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+                const match = bg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                if (match) {
+                    colors.push([parseInt(match[1]), parseInt(match[2]), parseInt(match[3])]);
+                }
+            }
+            const fg = style.color;
+            if (fg) {
+                const match = fg.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+                if (match) {
+                    colors.push([parseInt(match[1]), parseInt(match[2]), parseInt(match[3])]);
+                }
+            }
         }
-
-    # Score each signal across matched pairs
-    position_scores = []
-    text_scores = []
-    bg_color_scores = []
-    text_color_scores = []
-    font_family_scores = []
-    font_size_scores = []
-
-    for ref, gen, iou in matches:
-        position_scores.append(iou)
-
-        text_scores.append(_text_similarity(ref.get("text", ""), gen.get("text", "")))
-
-        ref_bg = _parse_color(ref.get("bgColor", ""))
-        gen_bg = _parse_color(gen.get("bgColor", ""))
-        bg_color_scores.append(1.0 - _color_distance(ref_bg, gen_bg))
-
-        ref_tc = _parse_color(ref.get("color", ""))
-        gen_tc = _parse_color(gen.get("color", ""))
-        text_color_scores.append(1.0 - _color_distance(ref_tc, gen_tc))
-
-        # Font family: check if any family matches
-        ref_fonts = set(f.strip().strip("'\"").lower() for f in ref.get("fontFamily", "").split(","))
-        gen_fonts = set(f.strip().strip("'\"").lower() for f in gen.get("fontFamily", "").split(","))
-        font_family_scores.append(1.0 if ref_fonts & gen_fonts else 0.0)
-
-        # Font size: ratio-based
-        ref_fs = ref.get("fontSize", 0)
-        gen_fs = gen.get("fontSize", 0)
-        if ref_fs > 0 and gen_fs > 0:
-            ratio = min(ref_fs, gen_fs) / max(ref_fs, gen_fs)
-            font_size_scores.append(ratio)
-        elif ref_fs == 0 and gen_fs == 0:
-            font_size_scores.append(1.0)
-        else:
-            font_size_scores.append(0.0)
-
-    # Weight by match ratio (penalize missing blocks)
-    def avg(lst):
-        return sum(lst) / len(lst) if lst else 0.0
-
-    return {
-        "position": avg(position_scores) * match_ratio,
-        "text": avg(text_scores) * match_ratio,
-        "bg_color": avg(bg_color_scores) * match_ratio,
-        "text_color": avg(text_color_scores) * match_ratio,
-        "font_family": avg(font_family_scores) * match_ratio,
-        "font_size": avg(font_size_scores) * match_ratio,
-    }
+        return colors;
+    }""")
+    return [tuple(c) for c in colors]
 
 
-# ── Visual similarity (SSIM + MSE) ───────────────────────────────────────────
+def _quantize_color(c: tuple[int, int, int], step: int = 32) -> tuple[int, int, int]:
+    """Quantize color to reduce noise."""
+    return (c[0] // step * step, c[1] // step * step, c[2] // step * step)
+
+
+def color_palette_similarity(ref_colors: list, gen_colors: list) -> float:
+    """Compare color palettes using quantized histogram overlap."""
+    if not ref_colors and not gen_colors:
+        return 1.0
+    if not ref_colors or not gen_colors:
+        return 0.0
+
+    ref_hist = Counter(_quantize_color(c) for c in ref_colors)
+    gen_hist = Counter(_quantize_color(c) for c in gen_colors)
+
+    # Histogram intersection (normalized)
+    all_colors = set(ref_hist.keys()) | set(gen_hist.keys())
+    intersection = sum(min(ref_hist.get(c, 0), gen_hist.get(c, 0)) for c in all_colors)
+    total = max(sum(ref_hist.values()), sum(gen_hist.values()))
+
+    return float(intersection / total) if total > 0 else 0.0
+
+
+# ── Visual similarity ────────────────────────────────────────────────────────
 
 def _get_content_bbox(img_arr: np.ndarray, bg_color: int = 255, margin: int = 5):
     diff = np.any(img_arr != bg_color, axis=2)
@@ -345,7 +326,6 @@ def _get_content_bbox(img_arr: np.ndarray, bg_color: int = 255, margin: int = 5)
 
 
 def visual_similarity(ref_img: np.ndarray, gen_img: np.ndarray) -> float:
-    """SSIM + MSE on content-cropped region, returns score in [0, 1]."""
     y0, y1, x0, x1 = _get_content_bbox(ref_img)
     ref_crop = ref_img[y0:y1, x0:x1]
     gen_crop = gen_img[y0:y1, x0:x1]
@@ -363,15 +343,11 @@ def visual_similarity(ref_img: np.ndarray, gen_img: np.ndarray) -> float:
 
 # ── Combined reward ──────────────────────────────────────────────────────────
 
-# Reward weights
 WEIGHTS = {
-    "position": 0.20,
-    "text": 0.20,
-    "bg_color": 0.10,
-    "text_color": 0.05,
-    "font_family": 0.05,
-    "font_size": 0.05,
-    "clip": 0.20,
+    "clip": 0.25,
+    "text": 0.25,
+    "layout": 0.20,
+    "color": 0.15,
     "visual": 0.15,
 }
 
@@ -384,60 +360,39 @@ def compute_reward(
     size: int = 256,
 ) -> tuple[float, dict]:
     """
-    Compute multi-signal reward comparing generated HTML to reference.
+    Compute multi-signal reward. Each signal is smooth and independently climbable.
 
-    Args:
-        generated_html: model output (or None if extraction failed)
-        reference_html: ground-truth HTML snippet
-        ref_image: reference screenshot as numpy array (for visual/CLIP)
-        page: Playwright page for rendering
-        size: image size for visual comparison
-
-    Returns:
-        (reward, details) where reward is in [-1, 1] and details is a dict of per-signal scores.
+    Returns (reward, details) where reward is in [-1, 1].
     """
     if generated_html is None:
-        details = {k: 0.0 for k in WEIGHTS}
-        return -1.0, details
+        return -1.0, {k: 0.0 for k in WEIGHTS}
 
     try:
-        # Render generated HTML
-        render_html(page, generated_html)
         gen_image = render_html_to_image(page, generated_html, size=size)
 
-        # Extract DOM blocks from both
+        # Global text comparison
         render_html(page, reference_html)
-        ref_blocks = extract_dom_blocks(page)
+        ref_text = _extract_visible_text(page)
+        ref_blocks = _extract_meaningful_blocks(page)
+        ref_colors = _extract_colors(page)
 
         render_html(page, generated_html)
-        gen_blocks = extract_dom_blocks(page)
+        gen_text = _extract_visible_text(page)
+        gen_blocks = _extract_meaningful_blocks(page)
+        gen_colors = _extract_colors(page)
 
     except Exception:
-        details = {k: 0.0 for k in WEIGHTS}
-        return -1.0, details
-
-    # DOM-level signals
-    block_scores = match_blocks(ref_blocks, gen_blocks)
-
-    # Image-level signals
-    clip_score = clip_similarity(ref_image, gen_image)
-    vis_score = visual_similarity(ref_image, gen_image)
+        return -1.0, {k: 0.0 for k in WEIGHTS}
 
     details = {
-        "position": block_scores["position"],
-        "text": block_scores["text"],
-        "bg_color": block_scores["bg_color"],
-        "text_color": block_scores["text_color"],
-        "font_family": block_scores["font_family"],
-        "font_size": block_scores["font_size"],
-        "clip": clip_score,
-        "visual": vis_score,
+        "clip": clip_similarity(ref_image, gen_image),
+        "text": text_similarity(ref_text, gen_text),
+        "layout": layout_score(ref_blocks, gen_blocks),
+        "color": color_palette_similarity(ref_colors, gen_colors),
+        "visual": visual_similarity(ref_image, gen_image),
     }
 
-    # Weighted sum
     raw = sum(WEIGHTS[k] * details[k] for k in WEIGHTS)
-
-    # Scale to [-1, 1]
     reward = 2.0 * raw - 1.0
 
     return float(reward), details
@@ -452,10 +407,6 @@ def compute_visual_reward(
     size: int = 256,
     reference_html: str | None = None,
 ) -> float:
-    """
-    Compute reward. Uses full multi-signal if reference_html is provided,
-    otherwise falls back to visual-only (SSIM+MSE).
-    """
     if generated_html is None:
         return -1.0
 
@@ -468,6 +419,5 @@ def compute_visual_reward(
         gen_image = render_html_to_image(page, generated_html, size=size)
     except Exception:
         return -1.0
-
     score = visual_similarity(reference_image, gen_image)
     return float(2.0 * score - 1.0)

@@ -11,8 +11,8 @@ RENDERER_NAME = "qwen3_5_disable_thinking"
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 8))
 GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 8))
 MAX_BATCHES = int(os.environ.get("MAX_BATCHES", 0))  # 0 = all
-LR = float(os.environ.get("LR", 4e-5))
-MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 1024))
+LR = float(os.environ.get("LR", 1e-5))
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 2048))
 KL_BETA = float(os.environ.get("KL_BETA", 0.05))
 PPO_CLIP_LOW = float(os.environ.get("PPO_CLIP_LOW", 0.8))
 PPO_CLIP_HIGH = float(os.environ.get("PPO_CLIP_HIGH", 1.2))

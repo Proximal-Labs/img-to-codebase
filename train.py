@@ -28,7 +28,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from config import (
     MODEL, LORA_RANK, RENDERER_NAME, BATCH_SIZE, GROUP_SIZE, MAX_BATCHES,
     LR, MAX_TOKENS, KL_BETA, PPO_CLIP_LOW, PPO_CLIP_HIGH, SAVE_EVERY,
-    IMG_SIZE, VIEWPORT_W, VIEWPORT_H, MANIFEST_PATH, DESIGN2CODE_MANIFEST,
+    IMG_SIZE, VIEWPORT_W, VIEWPORT_H, MANIFEST_PATH,
     LOG_DIR, SYSTEM_PROMPT, EVAL_DIR,
 )
 from reward import (
@@ -45,18 +45,10 @@ def load_dataset(manifest_path: str) -> list[dict]:
         return json.load(f)
 
 
-def load_all_datasets() -> list[dict]:
-    """Load and merge WebSight + Design2Code datasets."""
+def load_training_data() -> list[dict]:
+    """Load WebSight training data. Design2Code is used for eval only."""
     dataset = load_dataset(MANIFEST_PATH)
     logger.info(f"  WebSight: {len(dataset)} examples")
-
-    if os.path.exists(DESIGN2CODE_MANIFEST):
-        d2c = load_dataset(DESIGN2CODE_MANIFEST)
-        logger.info(f"  Design2Code: {len(d2c)} examples")
-        dataset.extend(d2c)
-    else:
-        logger.info("  Design2Code: not found, skipping (run download_design2code.py)")
-
     random.shuffle(dataset)
     return dataset
 
@@ -80,7 +72,7 @@ def build_prompt(renderer, screenshot_path: str):
 def main():
     os.makedirs(LOG_DIR, exist_ok=True)
 
-    dataset = load_all_datasets()
+    dataset = load_training_data()
     n_batches = len(dataset) // BATCH_SIZE
     if MAX_BATCHES > 0:
         n_batches = min(n_batches, MAX_BATCHES)
