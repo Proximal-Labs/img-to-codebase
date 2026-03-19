@@ -87,14 +87,15 @@ def render_html_to_image(page: Page, html_snippet: str, size: int = 256) -> np.n
     return np.array(img)
 
 
-def render_html_to_file(page: Page, html_snippet: str | None, save_path: str) -> bool:
+def render_html_to_file(page: Page, html_snippet: str | None, save_path: str, full_page: bool = True) -> bool:
+    """Render HTML to a screenshot file. full_page=True captures entire scrollable content."""
     if html_snippet is None:
         Image.new("RGB", (VIEWPORT_W, VIEWPORT_H), (240, 240, 240)).save(save_path)
         return False
     try:
         render_html(page, html_snippet)
         page.wait_for_timeout(100)
-        page.screenshot(path=save_path)
+        page.screenshot(path=save_path, full_page=full_page)
         return True
     except Exception:
         Image.new("RGB", (VIEWPORT_W, VIEWPORT_H), (240, 240, 240)).save(save_path)

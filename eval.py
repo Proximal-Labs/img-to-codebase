@@ -121,12 +121,14 @@ def main():
         page = reward_pages[i % len(reward_pages)]
         prompt = build_prompt(renderer, item["screenshot"])
 
-        shutil.copy2(item["screenshot"], os.path.join(example_dir, "reference.png"))
+        # Re-render reference as full-page screenshot (dataset screenshots are viewport-only)
+        ref_html = item.get("reference_html") or item["html"]
+        render_html_to_file(render_page, ref_html, os.path.join(example_dir, "reference.png"))
 
         # Base model
         base_result = base_sampler.sample(prompt=prompt, num_samples=1, sampling_params=eval_params).result()
         base_html = extract_html_from_response(get_text_content(renderer.parse_response(base_result.sequences[0].tokens)[0]))
-        base_reward = compute_visual_reward(base_html, ref_img, page)
+        base_reward = compute_visual_reward(base_html, ref_img, page, reference_html=ref_html)
         base_rewards.append(base_reward)
 
         with open(os.path.join(example_dir, "base.html"), "w") as f:
@@ -138,7 +140,7 @@ def main():
         if rl_sampler is not None:
             rl_result = rl_sampler.sample(prompt=prompt, num_samples=1, sampling_params=eval_params).result()
             rl_html = extract_html_from_response(get_text_content(renderer.parse_response(rl_result.sequences[0].tokens)[0]))
-            rl_reward = compute_visual_reward(rl_html, ref_img, page)
+            rl_reward = compute_visual_reward(rl_html, ref_img, page, reference_html=ref_html)
             rl_rewards.append(rl_reward)
 
             with open(os.path.join(example_dir, "rl.html"), "w") as f:
