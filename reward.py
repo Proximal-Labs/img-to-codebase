@@ -405,19 +405,10 @@ def compute_visual_reward(
     reference_image: np.ndarray,
     page: Page,
     size: int = 256,
-    reference_html: str | None = None,
+    reference_html: str = "",
 ) -> float:
     if generated_html is None:
         return -1.0
 
-    if reference_html is not None:
-        reward, _ = compute_reward(generated_html, reference_html, reference_image, page, size)
-        return reward
-
-    # Fallback: visual only
-    try:
-        gen_image = render_html_to_image(page, generated_html, size=size)
-    except Exception:
-        return -1.0
-    score = visual_similarity(reference_image, gen_image)
-    return float(2.0 * score - 1.0)
+    reward, _ = compute_reward(generated_html, reference_html, reference_image, page, size)
+    return reward

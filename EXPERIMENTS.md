@@ -146,5 +146,62 @@ Slightly off:     +0.802  [smooth gradient toward perfect]
 
 No cliff edges. Each error type degrades the right signals without killing the whole score.
 
+### Results (4-batch smoke test)
+- **Training:** 4 batches, reward 0.058 → 0.190
+- **Eval:** Base 0.231, RL 0.200, improvement -0.031, RL wins 5/10
+- **Assessment:** Essentially tied after 4 batches. Reward is smooth and climbable (all positive, no -1.0 catastrophes) but model needs more training time to separate from base.
+
+---
+
+## Experiment 5: Tall Screenshots (512x1536 Viewport)
+
+**Goal:** Show the model full page content instead of cutting off at 512px.
+
+### Setup Changes
+- **Viewport:** 512x1536 (3x taller) — shows nav, hero, body, footer
+- **Everything else same as Experiment 4**
+
+### Key Insight
+The model was being asked to reproduce content it couldn't see. With 512x512 viewport, most pages were cut off — the reference HTML had sections below the fold that never appeared in the screenshot. The model was penalized for content it literally had no visual signal for.
+
+### Results (8-batch run)
+- **Training:** 8 batches, reward 0.116 → 0.145 (consistently positive)
+- **Eval:** Base 0.586, RL 0.585, improvement -0.000, RL wins 6/10
+- **Absolute scores jumped massively** — base went from 0.231 → 0.586 just from showing more content. The model was already decent; it just couldn't see the full page before.
+
+### Assessment
+The tall viewport was the single biggest improvement to absolute quality. RL essentially tied with base after 8 batches but won 6/10 matchups — needs more training to compound.
+
+---
+
+## Experiment 6: Desktop Viewport + Curriculum (In Progress)
+
+**Goal:** Natural desktop layout (1024x768), curriculum learning (easy→hard), include Design2Code pages.
+
+### Setup Changes
+- **Viewport:** 1024x768 (standard desktop, proper horizontal layout)
+- **Dataset:** 974 WebSight + 37 Design2Code (<8K chars) = 1011 examples
+- **Curriculum:** Dataset sorted by HTML length — shortest pages first, longest last. Model learns simple layouts (nav + heading) before complex ones (multi-section pages with forms, cards, etc.)
+- **MAX_TOKENS:** 4096 (up from 2048, supports longer D2C pages)
+- **LR:** 1e-5
+- **Design2Code** filtered to pages <8K chars (37 of 483 qualify) — the rest are 60K+ chars and can't be generated in 4096 tokens
+
+### Why Curriculum
+Without curriculum, the model sees a random mix of easy and hard pages. It wastes gradient signal on hard pages it can't solve yet, while also not spending enough time on easy pages to nail the fundamentals. With curriculum:
+- Batches 0-28: WebSight pages (447-2000 chars) — learn basic HTML structure, colors, fonts
+- Batches 29-30: Design2Code pages (4000-8000 chars) — apply skills to real websites
+
+### Why 1024x768
+The 512px width was squishing layouts into a single column. Real websites are designed for 1024-1440px width — nav bars should be horizontal, content should use the full width, sidebars should be visible. At 1024px the model sees the intended layout, not a mobile-like rendering.
+
 ### Status
-Smoke testing. Full training run next.
+Running 30-batch curriculum training. 1011 examples, checkpoint at batch 15, auto-eval at the end.
+
+### Reward Function (unchanged from v4)
+```
+0.25 * CLIP perceptual similarity
+0.25 * global text match (SequenceMatcher on all visible text)
+0.20 * layout score (meaningful DOM elements, soft count penalty)
+0.15 * color palette similarity (quantized histogram overlap)
+0.15 * visual SSIM+MSE (content-cropped)
+```
