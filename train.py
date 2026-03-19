@@ -29,7 +29,7 @@ from tinker_cookbook.tokenizer_utils import get_tokenizer
 from config import (
     MODEL, LORA_RANK, RENDERER_NAME, BATCH_SIZE, GROUP_SIZE, MAX_BATCHES,
     LR, MAX_TOKENS, KL_BETA, PPO_CLIP_LOW, PPO_CLIP_HIGH, SAVE_EVERY,
-    IMG_SIZE, VIEWPORT_W, VIEWPORT_H, MANIFEST_PATH,
+    IMG_SIZE, VIEWPORT_W, VIEWPORT_H, MANIFEST_PATH, DESIGN2CODE_MANIFEST,
     LOG_DIR, SYSTEM_PROMPT, EVAL_DIR,
 )
 from reward import (
@@ -47,10 +47,27 @@ def load_dataset(manifest_path: str) -> list[dict]:
 
 
 def load_training_data() -> list[dict]:
-    """Load WebSight training data. Design2Code is used for eval only."""
+    """
+    Load training data with curriculum ordering: easy (short HTML) → hard (long HTML).
+
+    Merges WebSight + Design2Code, sorts by HTML length so the model
+    learns simple layouts before tackling complex pages.
+    """
     dataset = load_dataset(MANIFEST_PATH)
     logger.info(f"  WebSight: {len(dataset)} examples")
-    random.shuffle(dataset)
+
+    if os.path.exists(DESIGN2CODE_MANIFEST):
+        d2c = load_dataset(DESIGN2CODE_MANIFEST)
+        # Filter to pages the model can actually generate (~8K chars ≈ 4K tokens)
+        d2c = [x for x in d2c if len(x.get("html", "")) < 8000]
+        logger.info(f"  Design2Code: {len(d2c)} examples (filtered to <8K chars)")
+        dataset.extend(d2c)
+
+    # Curriculum: sort by HTML length (easy → hard)
+    dataset.sort(key=lambda x: len(x.get("html", "")))
+    logger.info(f"  Curriculum: {len(dataset)} total, "
+                f"shortest={len(dataset[0]['html'])} chars, "
+                f"longest={len(dataset[-1]['html'])} chars")
     return dataset
 
 
