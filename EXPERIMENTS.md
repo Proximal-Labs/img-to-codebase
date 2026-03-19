@@ -197,7 +197,7 @@ The 512px width was squishing layouts into a single column. Real websites are de
 ### Status
 Running 30-batch curriculum training. 1011 examples, checkpoint at batch 15, auto-eval at the end.
 
-### Reward Function (unchanged from v4)
+### Reward Function (v4 with CLIP)
 ```
 0.25 * CLIP perceptual similarity
 0.25 * global text match (SequenceMatcher on all visible text)
@@ -205,3 +205,36 @@ Running 30-batch curriculum training. 1011 examples, checkpoint at batch 15, aut
 0.15 * color palette similarity (quantized histogram overlap)
 0.15 * visual SSIM+MSE (content-cropped)
 ```
+
+### Status
+Running. Pending results.
+
+---
+
+## Experiment 7: Optimized Pure-DOM Reward (In Progress)
+
+**Goal:** Faster, cleaner reward — drop CLIP model, cache reference extraction, single JS call.
+
+### Setup
+- Same as Experiment 6 (1024x768, curriculum, 1011 examples, 30 batches)
+- **LR:** 1e-5
+- **MAX_TOKENS:** 4096
+
+### Reward Function v5: Pure DOM, no model inference
+```
+0.30 * global text match (SequenceMatcher on all visible text)
+0.30 * layout score (meaningful DOM elements, soft count penalty)
+0.20 * color palette similarity (quantized histogram overlap)
+0.20 * visual SSIM+MSE (content-cropped)
+```
+
+### Key Optimizations
+1. **Dropped CLIP** — DOM comparison is faster and more precise than a 400M parameter model approximating what `getComputedStyle()` gives you exactly
+2. **Cached reference extraction** — ref DOM extracted once per prompt, reused across all 8 rollouts (was redundantly extracted 8x)
+3. **Single JS evaluate** — combined text + blocks + colors into one `page.evaluate()` call (was 3 separate round-trips)
+4. **Gen HTML rendered once** — DOM extraction + screenshot in same page load (was rendering twice)
+
+~30% faster reward computation per batch. Same signal quality.
+
+### Status
+Running in parallel with Experiment 6. 30 batches.
