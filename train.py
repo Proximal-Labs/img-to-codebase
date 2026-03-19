@@ -1,8 +1,8 @@
 """
-RL training loop: screenshot → HTML/CSS using Tinker + Qwen3.5-4B.
+RL training loop: screenshot → HTML/CSS using Tinker.
 
 Uses GRPO-style advantage centering with PPO clipped loss.
-Reward = visual similarity (SSIM + MSE) - KL penalty.
+Reward = DOM block matching + text/color/font match + CLIP + visual similarity - KL penalty.
 """
 
 import json
@@ -118,7 +118,7 @@ def main():
 
         # 1. Sample rollouts
         sampling_client = training_client.save_weights_and_get_sampling_client()
-        futures, prompts, ref_images = [], [], []
+        futures, prompts, ref_images, ref_htmls = [], [], [], []
 
         for item in batch:
             prompt = build_prompt(renderer, item["screenshot"])
@@ -128,14 +128,15 @@ def main():
             futures.append(future)
             prompts.append(prompt)
             ref_images.append(load_reference_image(item["screenshot"], size=IMG_SIZE))
+            ref_htmls.append(item.get("reference_html") or item["html"])
 
         # 2. Compute rewards & build datums
         datums: list[types.Datum] = []
         batch_rewards: list[float] = []
         batch_kl: list[float] = []
 
-        for idx, (future, prompt, ref_img) in enumerate(
-            tqdm(zip(futures, prompts, ref_images), total=len(futures), desc=f"Batch {batch_idx}")
+        for idx, (future, prompt, ref_img, ref_html) in enumerate(
+            tqdm(zip(futures, prompts, ref_images, ref_htmls), total=len(futures), desc=f"Batch {batch_idx}")
         ):
             result = future.result()
             rewards_G: list[float] = []
@@ -150,7 +151,9 @@ def main():
                 parsed_msg, _ = renderer.parse_response(seq.tokens)
                 content = get_text_content(parsed_msg)
                 generated_html = extract_html_from_response(content)
-                visual_reward = compute_visual_reward(generated_html, ref_img, page, size=IMG_SIZE)
+                visual_reward = compute_visual_reward(
+                    generated_html, ref_img, page, size=IMG_SIZE, reference_html=ref_html,
+                )
 
                 kl = -sum(seq.logprobs) / len(seq.logprobs) if seq.logprobs else 0.0
                 rewards_G.append(visual_reward - KL_BETA * kl)
