@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TURNS = int(os.environ.get("MAX_TURNS", 3))
 TOKENS_PER_TURN = int(os.environ.get("TOKENS_PER_TURN", 2048))
+USE_THINKING = os.environ.get("USE_THINKING", "0") == "1"
 
 SYSTEM_PROMPT_AGENT = (
     "You are an expert at converting screenshots of web pages into HTML/CSS code. "
@@ -242,7 +243,9 @@ def main():
     # Setup
     tokenizer = get_tokenizer(MODEL)
     image_processor = AutoImageProcessor.from_pretrained(MODEL, use_fast=True)
-    renderer = renderers.get_renderer(RENDERER_NAME, tokenizer, image_processor=image_processor)
+    renderer_name = "qwen3_5" if USE_THINKING else RENDERER_NAME
+    renderer = renderers.get_renderer(renderer_name, tokenizer, image_processor=image_processor)
+    logger.info(f"Thinking: {'enabled' if USE_THINKING else 'disabled'} (renderer: {renderer_name})")
 
     service_client = tinker.ServiceClient()
     resume_path = os.environ.get("RESUME_FROM")
