@@ -53,6 +53,20 @@ def pil_to_base64(img: Image.Image) -> str:
 
 # ── OpenAI agent ──────────────────────────────────────────────────────────────
 
+ANALYZE_PROMPT = (
+    "Look at the diff image above. The red-highlighted areas show where the generated HTML "
+    "differs from the target screenshot.\n\n"
+    "List the specific visual differences you can identify (e.g. wrong background color on nav, "
+    "missing border-radius on button, text alignment is centered instead of left, etc). "
+    "Be specific and concise — just list the issues, don't generate code yet."
+)
+
+FIX_PROMPT = (
+    "Now fix ALL of the issues you identified above. "
+    "Output the complete corrected HTML in ```html ... ```."
+)
+
+
 def run_openai_agent(
     client, model: str, ref_pil: Image.Image, ref_render: np.ndarray,
     ref_info: dict, page, max_turns: int,
@@ -106,16 +120,31 @@ def run_openai_agent(
         if reward > 0.9 or turn == max_turns - 1:
             break
 
-        # Feedback
+        # Step 1: Show diff and ask model to ANALYZE what's wrong
         diff_img = make_diff_image(ref_render, gen_render, threshold=25)
         diff_b64 = pil_to_base64(Image.fromarray(diff_img))
-        feedback = make_feedback_prompt(ssim_score, diff_pct)
 
         messages.append({"role": "assistant", "content": content})
         messages.append({"role": "user", "content": [
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{ref_b64}"}},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{diff_b64}"}},
-            {"type": "text", "text": feedback},
+            {"type": "text", "text": (
+                f"Visual similarity: {ssim_score:.0%} ({diff_pct:.0%} of pixels differ).\n\n"
+                f"Above: the target screenshot (left) and the diff image (right) where "
+                f"red areas show where your output differs.\n\n" + ANALYZE_PROMPT
+            )},
         ]})
+
+        # Get analysis
+        analysis_response = client.chat.completions.create(
+            model=model, messages=messages, max_completion_tokens=1024, temperature=0.3,
+        )
+        analysis = analysis_response.choices[0].message.content
+        turn_result["analysis"] = analysis
+
+        # Step 2: Ask model to FIX based on its own analysis
+        messages.append({"role": "assistant", "content": analysis})
+        messages.append({"role": "user", "content": FIX_PROMPT})
 
     return turns
 
@@ -176,15 +205,33 @@ def run_tinker_agent(
         if reward > 0.9 or turn == max_turns - 1:
             break
 
+        # Step 1: Show diff + ref, ask model to ANALYZE
         diff_img = make_diff_image(ref_render, gen_render, threshold=25)
         diff_pil = Image.fromarray(diff_img)
-        feedback = make_feedback_prompt(ssim_score, diff_pct)
 
         convo.append({"role": "assistant", "content": content})
         convo.append({"role": "user", "content": [
+            {"type": "image", "image": ref_pil},
             {"type": "image", "image": diff_pil},
-            {"type": "text", "text": feedback},
+            {"type": "text", "text": (
+                f"Visual similarity: {ssim_score:.0%} ({diff_pct:.0%} of pixels differ).\n\n"
+                f"Above: the target screenshot and the diff image where "
+                f"red areas show where your output differs.\n\n" + ANALYZE_PROMPT
+            )},
         ]})
+
+        # Get analysis
+        analyze_prompt = renderer.build_generation_prompt(convo)
+        analyze_result = sampling_client.sample(
+            prompt=analyze_prompt, num_samples=1, sampling_params=sampling_params,
+        ).result()
+        analyze_msg, _ = renderer.parse_response(analyze_result.sequences[0].tokens)
+        analysis = get_text_content(analyze_msg)
+        turn_result["analysis"] = analysis
+
+        # Step 2: Ask model to FIX
+        convo.append({"role": "assistant", "content": analysis})
+        convo.append({"role": "user", "content": FIX_PROMPT})
 
     return turns
 
