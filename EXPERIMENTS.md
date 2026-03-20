@@ -394,13 +394,112 @@ Changes from v5:
 - **Root cause:** reward weights text/layout heavily but element-level styling (button bg color, section bg color) is only captured by the global color palette, which doesn't penalize *which* element lost its color
 - **Next:** add per-element background color to styled_text comparison
 
-### Updated Results Summary
+---
 
-| Exp | Model | Batches | Reward Fn | Eval Improvement | RL Wins |
-|-----|-------|---------|-----------|-----------------|---------|
-| 1 | 4B | 21 | Pixel SSIM+MSE | N/A | N/A |
-| 2 | 4B | 31 | Pixel SSIM+MSE | +0.080 | 6/10 |
-| 3 | 27B | 182 | 8-signal DOM+CLIP | +0.032 | 6/10 |
-| 7 | 27B | 30 | Pure DOM (no CLIP) | +0.082 | 7/10 |
-| 9 | 27B | 90 | Pure DOM+Tailwind+live ref | +0.231 | 9/10 |
-| **10** | **27B** | **200+90** | **Styled text + relative ordering** | **+0.167** | **8/10** |
+## Experiment 11: DOM Reward Was Broken — Switch to SSIM-Anchored
+
+**Key finding:** Our complex DOM reward was penalizing visually identical outputs.
+
+GPT-5.4 generated pages with SSIM 0.991 (pixel-perfect) but scored reward -0.5 under our DOM comparison. The DOM signals were detecting "differences" that didn't matter visually — different CSS class names, slightly different nesting depth, Tailwind utilities vs inline CSS.
+
+### The Fix
+Replaced the 5-signal DOM reward with a simple SSIM-anchored formula:
+```
+reward = 0.60 * SSIM + 0.25 * text_match + 0.15 * color_match
+```
+
+If it looks right visually, it IS right. Text and color are bonuses, not vetoes.
+
+### Before vs After (same GPT-5.4 outputs, same examples)
+```
+Old DOM reward:  avg 0.391  (punished pixel-perfect pages)
+SSIM reward:     avg 0.602  (rewards what actually matters)
+```
+
+---
+
+## Experiment 12: Multi-Turn Agent with Analyze-Then-Fix
+
+**Key finding:** Splitting "look at the diff" and "fix the code" into two steps works much better than doing both at once.
+
+### Approach
+Each turn is now two steps:
+1. **Analyze**: model sees the diff image, lists what's wrong ("nav background is missing, heading too large, button has no border-radius")
+2. **Fix**: model fixes based on its own analysis
+
+### GPT-5.4 Results — Analyze-Fix vs Naive
+```
+Naive (10 turns):      0.444 → 0.490 → 0.430 (peak turn 5, then REGRESSED)
+Analyze-fix (10 turns): 0.442 → 0.520 → 0.509 (held gains, no regression)
+Analyze-fix (3 turns):  0.476 → 0.498             (consistent improvement)
+```
+
+The analyze step acts as chain-of-thought for visual correction. The model's self-analysis was accurate — "heading too large, line-height too tall, font weight too heavy" — and it fixed progressively.
+
+### GPT-5.4 vs Qwen 4B Baselines (SSIM reward, 10 structured examples)
+```
+GPT-5.4:        avg 0.602
+Qwen 3.5-4B:    avg 0.443
+Gap:            0.159
+```
+
+### GPT-5.4 on Hard Design2Code (real websites, 7K-121K char source)
+```
+Avg reward: 0.716
+Avg SSIM:   0.906
+```
+
+GPT-5.4 crushes hard D2C pages — generates 1-4K chars of simplified HTML that visually matches 100K+ char source pages.
+
+---
+
+## Experiment 13: Full Agent Training (In Progress)
+
+**Goal:** Train Qwen3.5-4B with multi-turn analyze-fix loop to close the gap to GPT-5.4.
+
+### Setup
+- **Model:** Qwen3.5-4B
+- **Dataset:** 500 WebSight v0.2 + all 483 Design2Code = 983 examples
+- **D2C length filter removed** — model generates short HTML regardless of source length
+- **100 batches**, 3 turns, analyze-then-fix, GROUP_SIZE=4
+- **Reward:** 0.60 SSIM + 0.25 text + 0.15 color
+- **TOKENS_PER_TURN:** 4096
+- Curriculum ordered (easy WebSight → hard D2C)
+- Checkpoints every 20 batches
+
+### Targets
+- 4B baseline: 0.443
+- GPT-5.4: 0.602
+- Gap to close: 0.159
+
+---
+
+## Overall Results Summary
+
+| Exp | Model | Batches | Reward Fn | Eval Score | Notes |
+|-----|-------|---------|-----------|-----------|-------|
+| 1 | 4B | 21 | Pixel SSIM | — | Proof of concept |
+| 2 | 4B | 31 | Pixel SSIM | +0.080 vs base | First working RL |
+| 3 | 27B | 182 | 8-signal DOM+CLIP | +0.032 vs base | Too noisy |
+| 7 | 27B | 30 | Pure DOM | +0.082 vs base | First good result |
+| 9 | 27B | 90 | Pure DOM+live ref | +0.231 vs base | Best single-turn RL |
+| 10 | 27B | 290 | Styled text | +0.167 vs base | Overnight run |
+| 11 | — | — | SSIM-anchored | — | Reward function fix |
+| 12 | — | — | Analyze-fix | — | Multi-turn agent eval |
+| **13** | **4B** | **100** | **SSIM + analyze-fix** | **TBD** | **Agent RL training** |
+
+## Key Learnings
+
+1. **SSIM is the right anchor for reward** — complex DOM comparison penalized visually correct outputs. Keep it simple: if it looks right, it IS right.
+
+2. **Don't over-engineer the reward** — we went from 2 signals → 8 signals → 5 signals → back to 3 signals. The simplest version (SSIM + text + color) works best.
+
+3. **Always benchmark against frontier models** — running GPT-5.4 on our eval revealed the DOM reward was broken. Should have done this from the start.
+
+4. **Analyze-then-fix > direct fix** — splitting visual analysis from code generation prevents regression and gives consistent improvement across turns.
+
+5. **Output is always short** — models generate 1-4K chars regardless of source page complexity (100K+ chars). No need to filter by source length. The model learns to produce simplified HTML that visually matches.
+
+6. **"Hard" pages aren't that hard visually** — most Design2Code pages are structurally simple websites. The long HTML comes from verbose frameworks (Tailwind, Bootstrap), not visual complexity. A few hundred chars of clean HTML can match a 100K char source.
+
+7. **Multi-turn is expensive but higher quality** — 3 turns × analyze-fix = 9 API calls per rollout. Slower but the training signal is much richer — the model learns self-correction, not just one-shot generation.
