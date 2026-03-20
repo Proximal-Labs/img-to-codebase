@@ -176,6 +176,9 @@ def extract_dom_info(page: Page) -> dict:
                     fontSize: parseFloat(style.fontSize) || 0,
                     fontWeight: style.fontWeight || '400',
                     color: style.color || '',
+                    bgColor: style.backgroundColor || '',
+                    borderRadius: style.borderRadius || '0px',
+                    padding: style.padding || '0px',
                 });
             }
         }
@@ -243,8 +246,10 @@ def styled_text_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
     Each text-bearing block is matched by content similarity, then
     styling similarity adds a bonus.
     """
-    ref_texts = [b for b in ref_blocks if b.get("text")]
-    gen_texts = [b for b in gen_blocks if b.get("text")]
+    # Include blocks with text OR styled elements (buttons, inputs, colored sections)
+    STYLED_TAGS = {"button", "input", "a", "nav", "header", "footer", "section"}
+    ref_texts = [b for b in ref_blocks if b.get("text") or b.get("tag") in STYLED_TAGS]
+    gen_texts = [b for b in gen_blocks if b.get("text") or b.get("tag") in STYLED_TAGS]
 
     if not ref_texts and not gen_texts:
         return 1.0
@@ -288,10 +293,20 @@ def styled_text_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
             gen_c = _parse_css_color(gen.get("color", ""))
             style_scores.append(1.0 - _color_dist(ref_c, gen_c))
 
+            # Background color (catches button/section styling)
+            ref_bg = _parse_css_color(ref.get("bgColor", ""))
+            gen_bg = _parse_css_color(gen.get("bgColor", ""))
+            style_scores.append(1.0 - _color_dist(ref_bg, gen_bg))
+
+            # Border radius (catches rounded buttons/cards)
+            ref_br = ref.get("borderRadius", "0px")
+            gen_br = gen.get("borderRadius", "0px")
+            style_scores.append(1.0 if ref_br == gen_br else 0.5)
+
             style_bonus = sum(style_scores) / len(style_scores) if style_scores else 1.0
 
-            # Blend: 70% text content, 30% style match
-            scores.append(0.7 * best_score + 0.3 * style_bonus)
+            # Blend: 60% text content, 40% style match
+            scores.append(0.6 * best_score + 0.4 * style_bonus)
         else:
             scores.append(0.0)
 
