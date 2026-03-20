@@ -32,7 +32,7 @@ from config import (
     MANIFEST_PATH, MODEL_PATH_FILE, EVAL_DIR, SYSTEM_PROMPT,
 )
 from reward import (
-    extract_html_from_response, load_reference_image,
+    extract_html_from_response,
     compute_visual_reward, render_html_to_file,
 )
 
@@ -41,8 +41,7 @@ def log(msg):
     print(msg, flush=True)
 
 
-def build_prompt(renderer, screenshot_path: str):
-    img = Image.open(screenshot_path).convert("RGB")
+def build_prompt(renderer, img: Image.Image):
     convo = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -124,13 +123,20 @@ def main():
         example_dir = os.path.join(eval_dir, f"example_{i:02d}")
         os.makedirs(example_dir, exist_ok=True)
 
-        ref_img = load_reference_image(item["screenshot"], size=IMG_SIZE)
         page = reward_pages[i % len(reward_pages)]
-        prompt = build_prompt(renderer, item["screenshot"])
-
-        # Save both the original dataset screenshot and a re-rendered version
         ref_html = item.get("reference_html") or item["html"]
-        shutil.copy2(item["screenshot"], os.path.join(example_dir, "ref-img.png"))
+
+        # Render ref HTML live — consistent with training input
+        from reward import extract_ref_info
+        ref_info = extract_ref_info(render_page, ref_html, size=IMG_SIZE)
+        ref_img = ref_info["image"]
+
+        # Build prompt from live render
+        ref_pil = Image.fromarray(ref_img).resize((VIEWPORT_W, VIEWPORT_H))
+        prompt = build_prompt(renderer, ref_pil)
+
+        # Save ref-img (what model sees) and ref-render (full page)
+        ref_pil.save(os.path.join(example_dir, "ref-img.png"))
         render_html_to_file(render_page, ref_html, os.path.join(example_dir, "ref-render.png"))
 
         # Base model

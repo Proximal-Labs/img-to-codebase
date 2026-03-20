@@ -72,9 +72,8 @@ def load_training_data() -> list[dict]:
     return dataset
 
 
-def build_prompt(renderer, screenshot_path: str):
-    """Build a multimodal prompt with the screenshot image + instruction."""
-    img = Image.open(screenshot_path).convert("RGB")
+def build_prompt(renderer, img: Image.Image):
+    """Build a multimodal prompt with a screenshot image + instruction."""
     convo = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {
@@ -148,17 +147,20 @@ def main():
         futures, prompts, ref_infos = [], [], []
 
         for item in batch:
-            prompt = build_prompt(renderer, item["screenshot"])
+            # Render ref HTML live — this is the image the model sees as input
+            page = reward_pages[len(futures) % len(reward_pages)]
+            ref_html = item.get("reference_html") or item["html"]
+            ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
+            ref_infos.append(ref_info)
+
+            # Build prompt from the live render (not stale dataset screenshot)
+            ref_pil = Image.fromarray(ref_info["image"]).resize((VIEWPORT_W, VIEWPORT_H))
+            prompt = build_prompt(renderer, ref_pil)
             future = sampling_client.sample(
                 prompt=prompt, num_samples=GROUP_SIZE, sampling_params=sampling_params,
             )
             futures.append(future)
             prompts.append(prompt)
-
-            # Cache: extract ref DOM once per prompt, reuse for all rollouts
-            page = reward_pages[len(futures) % len(reward_pages)]
-            ref_html = item.get("reference_html") or item["html"]
-            ref_infos.append(extract_ref_info(page, ref_html, size=IMG_SIZE))
 
         # 2. Compute rewards & build datums
         datums: list[types.Datum] = []
