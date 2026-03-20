@@ -59,10 +59,16 @@ SYSTEM_PROMPT_AGENT = (
     "your output — fix the red areas and resubmit."
 )
 
-FEEDBACK_PROMPT = (
-    "Here is a visual diff — red areas show where your HTML differs from the target. "
-    "Please fix these differences and output the complete corrected HTML in ```html ... ```."
-)
+def make_feedback_prompt(ssim_score: float, diff_pct: float) -> str:
+    """Generate feedback prompt with SSIM score and diff coverage."""
+    quality = "very close" if ssim_score > 0.8 else "partially matching" if ssim_score > 0.5 else "significantly different"
+    return (
+        f"Visual similarity score: {ssim_score:.0%} — your output is {quality} to the target.\n\n"
+        f"The diff image above highlights problem areas in red ({diff_pct:.0%} of pixels differ). "
+        f"Red regions indicate where your HTML renders differently from the target — "
+        f"this could be wrong colors, missing elements, incorrect sizing, or layout issues.\n\n"
+        f"Please fix the red areas and output the complete corrected HTML in ```html ... ```."
+    )
 
 
 def load_dataset(manifest_path: str) -> list[dict]:
@@ -150,10 +156,21 @@ def run_agent_rollout(
         if final_reward > 0.9 or turn == MAX_TURNS - 1:
             break
 
-        # Create diff at viewport resolution (not tiny 256x256)
+        # Create diff at viewport resolution
         gen_render = render_html_to_image(page, current_html, size=max(VIEWPORT_W, VIEWPORT_H))
         diff_img = make_diff_image(ref_render, gen_render, threshold=25)
         diff_pil = Image.fromarray(diff_img)
+
+        # Compute SSIM and diff percentage for feedback
+        from skimage.metrics import structural_similarity as ssim_fn
+        if ref_render.shape == gen_render.shape:
+            ssim_score = ssim_fn(ref_render, gen_render, channel_axis=2, data_range=255)
+        else:
+            ssim_score = 0.0
+        diff_mask = np.any(np.abs(ref_render.astype(int) - gen_render.astype(int)) > 25, axis=2)
+        diff_pct = diff_mask.sum() / diff_mask.size
+
+        feedback = make_feedback_prompt(ssim_score, diff_pct)
 
         # Add the model's response and feedback to conversation
         convo.append({"role": "assistant", "content": content})
@@ -161,7 +178,7 @@ def run_agent_rollout(
             "role": "user",
             "content": [
                 {"type": "image", "image": diff_pil},
-                {"type": "text", "text": FEEDBACK_PROMPT},
+                {"type": "text", "text": feedback},
             ],
         })
 
