@@ -386,7 +386,7 @@ def main():
 
         if gen_html is None:
             log("  Failed to generate HTML")
-            all_results.append({"task": task["task"], "ssim_initial": 0.0, "steps": []})
+            all_results.append({"task": task["task"], "website": task["website"], "ssim_initial": 0.0, "ssim_avg_steps": 0.0, "steps": []})
             continue
 
         with open(os.path.join(task_dir, "generated.html"), "w") as f:
