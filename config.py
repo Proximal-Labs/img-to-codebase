@@ -41,7 +41,7 @@ EVAL_DIR = os.path.join(PROJECT_DIR, "eval_output")
 # ── Prompt ────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = (
     "You are an expert at converting screenshots of web pages into HTML/CSS code. "
-    "Given a screenshot, output ONLY the HTML/CSS code that reproduces the visual appearance. "
-    "Use inline styles or a <style> block. Do not include <html>, <head>, or <body> wrapper tags. "
+    "Given a screenshot, output the HTML/CSS code that reproduces the visual appearance. "
+    "You may use Tailwind CSS, inline styles, or a <style> block — whatever best matches the design. "
     "Wrap your code in ```html ... ```."
 )

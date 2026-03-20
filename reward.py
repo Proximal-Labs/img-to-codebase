@@ -73,7 +73,10 @@ def render_html(page: Page, html_snippet: str):
         page.set_content(html_snippet)
     else:
         page.set_content(_wrap_snippet(html_snippet))
-    page.wait_for_timeout(100)
+    try:
+        page.wait_for_load_state("networkidle", timeout=3000)
+    except Exception:
+        page.wait_for_timeout(200)
 
 
 def render_html_to_image(page: Page, html_snippet: str, size: int = 256) -> np.ndarray:
