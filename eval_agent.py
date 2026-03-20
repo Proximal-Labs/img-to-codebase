@@ -71,7 +71,7 @@ def run_openai_agent(
 
     for turn in range(max_turns):
         response = client.chat.completions.create(
-            model=model, messages=messages, max_tokens=4096, temperature=0.3,
+            model=model, messages=messages, max_completion_tokens=4096, temperature=0.3,
         )
         content = response.choices[0].message.content
         html = extract_html_from_response(content)
