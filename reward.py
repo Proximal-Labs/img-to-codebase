@@ -105,6 +105,30 @@ def load_reference_image(path: str, size: int = 256) -> np.ndarray:
     return np.array(img)
 
 
+# ── Visual diff for agent feedback ─────────────────────────────────────────────
+
+def make_diff_image(ref_img: np.ndarray, gen_img: np.ndarray, threshold: int = 25) -> np.ndarray:
+    """
+    Create a diff image highlighting pixel differences in red.
+    Regions where ref and gen differ beyond threshold are overlaid in red.
+    Returns an RGB numpy array.
+    """
+    # Ensure same size
+    if ref_img.shape != gen_img.shape:
+        gen_pil = Image.fromarray(gen_img).resize((ref_img.shape[1], ref_img.shape[0]))
+        gen_img = np.array(gen_pil)
+
+    diff = np.abs(ref_img.astype(int) - gen_img.astype(int))
+    mask = np.any(diff > threshold, axis=2)
+
+    # Blend: gen image with red overlay on differing pixels
+    result = gen_img.copy()
+    result[mask] = (
+        (result[mask].astype(int) * 0.3 + np.array([255, 0, 0]) * 0.7).astype(np.uint8)
+    )
+    return result
+
+
 # ── Combined DOM extraction (single JS call) ─────────────────────────────────
 
 MEANINGFUL_TAGS = {
