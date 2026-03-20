@@ -169,6 +169,9 @@ def extract_dom_info(page: Page) -> dict:
                     w: rect.width,
                     h: rect.height,
                     text: directText.substring(0, 200),
+                    fontSize: parseFloat(style.fontSize) || 0,
+                    fontWeight: style.fontWeight || '400',
+                    color: style.color || '',
                 });
             }
         }
@@ -211,6 +214,7 @@ def extract_gen_info(page: Page, generated_html: str, size: int = 256) -> dict:
 # ── Comparison functions ─────────────────────────────────────────────────────
 
 def text_similarity(ref_text: str, gen_text: str) -> float:
+    """Global text content similarity."""
     if not ref_text and not gen_text:
         return 1.0
     if not ref_text or not gen_text:
@@ -218,45 +222,149 @@ def text_similarity(ref_text: str, gen_text: str) -> float:
     return SequenceMatcher(None, ref_text.lower(), gen_text.lower()).ratio()
 
 
-def _iou(a: dict, b: dict) -> float:
-    x1 = max(a["x"], b["x"])
-    y1 = max(a["y"], b["y"])
-    x2 = min(a["x"] + a["w"], b["x"] + b["w"])
-    y2 = min(a["y"] + a["h"], b["y"] + b["h"])
-    inter = max(0, x2 - x1) * max(0, y2 - y1)
-    union = a["w"] * a["h"] + b["w"] * b["h"] - inter
-    return inter / union if union > 0 else 0.0
+def _parse_css_color(color_str: str) -> tuple[int, int, int] | None:
+    match = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", color_str)
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3))) if match else None
+
+
+def _color_dist(c1, c2) -> float:
+    if c1 is None or c2 is None:
+        return 1.0
+    return sum((a - b) ** 2 for a, b in zip(c1, c2)) ** 0.5 / (255 ** 2 * 3) ** 0.5
+
+
+def styled_text_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
+    """
+    Compare text content paired with styling (font size, weight, color).
+    Each text-bearing block is matched by content similarity, then
+    styling similarity adds a bonus.
+    """
+    ref_texts = [b for b in ref_blocks if b.get("text")]
+    gen_texts = [b for b in gen_blocks if b.get("text")]
+
+    if not ref_texts and not gen_texts:
+        return 1.0
+    if not ref_texts or not gen_texts:
+        return 0.0
+
+    used_gen = set()
+    scores = []
+
+    for ref in ref_texts:
+        best_score = 0.0
+        best_idx = -1
+
+        for j, gen in enumerate(gen_texts):
+            if j in used_gen:
+                continue
+            # Text content match
+            txt_sim = SequenceMatcher(None, ref["text"].lower(), gen["text"].lower()).ratio()
+            if txt_sim > best_score:
+                best_score = txt_sim
+                best_idx = j
+
+        if best_idx >= 0 and best_score > 0.3:
+            gen = gen_texts[best_idx]
+            used_gen.add(best_idx)
+
+            # Style bonus: font size, weight, color
+            style_scores = []
+
+            # Font size ratio
+            ref_fs = ref.get("fontSize", 0)
+            gen_fs = gen.get("fontSize", 0)
+            if ref_fs > 0 and gen_fs > 0:
+                style_scores.append(min(ref_fs, gen_fs) / max(ref_fs, gen_fs))
+
+            # Font weight match
+            style_scores.append(1.0 if ref.get("fontWeight") == gen.get("fontWeight") else 0.5)
+
+            # Text color
+            ref_c = _parse_css_color(ref.get("color", ""))
+            gen_c = _parse_css_color(gen.get("color", ""))
+            style_scores.append(1.0 - _color_dist(ref_c, gen_c))
+
+            style_bonus = sum(style_scores) / len(style_scores) if style_scores else 1.0
+
+            # Blend: 70% text content, 30% style match
+            scores.append(0.7 * best_score + 0.3 * style_bonus)
+        else:
+            scores.append(0.0)
+
+    # Soft penalty for unmatched
+    count_ratio = min(len(ref_texts), len(gen_texts)) / max(len(ref_texts), len(gen_texts))
+    count_penalty = 0.5 + 0.5 * count_ratio
+
+    return float((sum(scores) / len(scores)) * count_penalty)
+
+
+def _size_similarity(a: dict, b: dict) -> float:
+    """Compare width and height similarity (ratio-based)."""
+    w_sim = min(a["w"], b["w"]) / max(a["w"], b["w"]) if max(a["w"], b["w"]) > 0 else 1.0
+    h_sim = min(a["h"], b["h"]) / max(a["h"], b["h"]) if max(a["h"], b["h"]) > 0 else 1.0
+    return (w_sim + h_sim) / 2
 
 
 def layout_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
+    """
+    Layout comparison using size similarity + relative vertical ordering.
+    Robust to cascading offset errors from earlier elements.
+    """
     if not ref_blocks and not gen_blocks:
         return 1.0
     if not ref_blocks or not gen_blocks:
         return 0.0
 
-    used_gen = set()
-    ious = []
+    # Sort both by vertical position
+    ref_sorted = sorted(ref_blocks, key=lambda b: (b["y"], b["x"]))
+    gen_sorted = sorted(gen_blocks, key=lambda b: (b["y"], b["x"]))
 
-    for ref in ref_blocks:
-        best_iou = 0.0
+    # Match by best size + text overlap
+    used_gen = set()
+    match_scores = []
+
+    for ref in ref_sorted:
+        best_score = 0.0
         best_idx = -1
-        for j, gen in enumerate(gen_blocks):
+
+        for j, gen in enumerate(gen_sorted):
             if j in used_gen:
                 continue
-            score = _iou(ref, gen)
-            if score > best_iou:
-                best_iou = score
+
+            # Size similarity
+            size_sim = _size_similarity(ref, gen)
+
+            # Text overlap bonus (if both have text)
+            text_sim = 0.0
+            if ref.get("text") and gen.get("text"):
+                text_sim = SequenceMatcher(None, ref["text"].lower(), gen["text"].lower()).ratio()
+
+            score = 0.5 * size_sim + 0.5 * text_sim if (ref.get("text") or gen.get("text")) else size_sim
+
+            if score > best_score:
+                best_score = score
                 best_idx = j
 
-        ious.append(best_iou)
-        if best_idx >= 0 and best_iou > 0.05:
+        match_scores.append(best_score)
+        if best_idx >= 0 and best_score > 0.2:
             used_gen.add(best_idx)
 
-    avg_iou = sum(ious) / len(ious)
+    avg_match = sum(match_scores) / len(match_scores)
+
+    # Check vertical ordering consistency
+    # For matched pairs, verify they appear in the same relative order
+    ordering_score = 1.0
+    if len(used_gen) >= 2:
+        matched_gen_indices = sorted(used_gen)
+        # If gen indices are monotonically increasing, ordering is preserved
+        inversions = sum(1 for i in range(len(matched_gen_indices) - 1)
+                        if matched_gen_indices[i] > matched_gen_indices[i + 1])
+        ordering_score = 1.0 - (inversions / max(len(matched_gen_indices) - 1, 1))
+
     count_ratio = min(len(ref_blocks), len(gen_blocks)) / max(len(ref_blocks), len(gen_blocks))
     count_penalty = 0.5 + 0.5 * count_ratio
 
-    return float(avg_iou * count_penalty)
+    return float(avg_match * ordering_score * count_penalty)
 
 
 def _quantize_color(c, step: int = 32):
@@ -311,10 +419,11 @@ def visual_similarity(ref_img: np.ndarray, gen_img: np.ndarray) -> float:
 # ── Combined reward ──────────────────────────────────────────────────────────
 
 WEIGHTS = {
-    "text": 0.30,
-    "layout": 0.30,
-    "color": 0.20,
-    "visual": 0.20,
+    "text": 0.20,          # global text content match
+    "styled_text": 0.15,   # text + font size/weight/color match
+    "layout": 0.25,        # element sizes + relative ordering
+    "color": 0.20,         # color palette
+    "visual": 0.20,        # pixel SSIM
 }
 
 
@@ -325,6 +434,7 @@ def compute_reward_from_info(ref_info: dict, gen_info: dict) -> tuple[float, dic
     """
     details = {
         "text": text_similarity(ref_info["text"], gen_info["text"]),
+        "styled_text": styled_text_score(ref_info["blocks"], gen_info["blocks"]),
         "layout": layout_score(ref_info["blocks"], gen_info["blocks"]),
         "color": color_palette_similarity(ref_info["colors"], gen_info["colors"]),
         "visual": visual_similarity(ref_info["image"], gen_info["image"]),
