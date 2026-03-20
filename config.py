@@ -13,7 +13,7 @@ GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 8))
 MAX_BATCHES = int(os.environ.get("MAX_BATCHES", 0))  # 0 = all
 LR = float(os.environ.get("LR", 1e-5))
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 4096))
-KL_BETA = float(os.environ.get("KL_BETA", 0.05))
+KL_BETA = float(os.environ.get("KL_BETA", 0.02))
 PPO_CLIP_LOW = float(os.environ.get("PPO_CLIP_LOW", 0.8))
 PPO_CLIP_HIGH = float(os.environ.get("PPO_CLIP_HIGH", 1.2))
 SAVE_EVERY = int(os.environ.get("SAVE_EVERY", 15))  # 0 = disabled
