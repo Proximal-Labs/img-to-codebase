@@ -133,6 +133,10 @@ def extract_dom_info(page: Page) -> dict:
             const tag = el.tagName.toLowerCase();
             const style = getComputedStyle(el);
 
+            // Skip invisible elements
+            if (style.display === 'none' || style.visibility === 'hidden' ||
+                parseFloat(style.opacity) === 0) continue;
+
             // Colors (from all visible elements)
             if (rect.width >= 10 && rect.height >= 10) {
                 const bg = style.backgroundColor;
@@ -305,10 +309,19 @@ def _size_similarity(a: dict, b: dict) -> float:
     return (w_sim + h_sim) / 2
 
 
+TAG_WEIGHTS = {
+    "h1": 2.0, "h2": 1.8, "h3": 1.6,
+    "button": 1.8, "input": 1.8, "textarea": 1.6, "select": 1.6,
+    "a": 1.5, "img": 1.5,
+    "nav": 1.3, "header": 1.3, "footer": 1.3,
+}
+
+
 def layout_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
     """
     Layout comparison using size similarity + relative vertical ordering.
     Robust to cascading offset errors from earlier elements.
+    Important elements (headings, buttons, inputs) are weighted higher.
     """
     if not ref_blocks and not gen_blocks:
         return 1.0
@@ -319,9 +332,10 @@ def layout_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
     ref_sorted = sorted(ref_blocks, key=lambda b: (b["y"], b["x"]))
     gen_sorted = sorted(gen_blocks, key=lambda b: (b["y"], b["x"]))
 
-    # Match by best size + text overlap
+    # Match by best size + text overlap, weighted by tag importance
     used_gen = set()
-    match_scores = []
+    weighted_scores = []
+    weights = []
 
     for ref in ref_sorted:
         best_score = 0.0
@@ -345,11 +359,13 @@ def layout_score(ref_blocks: list[dict], gen_blocks: list[dict]) -> float:
                 best_score = score
                 best_idx = j
 
-        match_scores.append(best_score)
+        tag_weight = TAG_WEIGHTS.get(ref.get("tag", ""), 1.0)
+        weighted_scores.append(best_score * tag_weight)
+        weights.append(tag_weight)
         if best_idx >= 0 and best_score > 0.2:
             used_gen.add(best_idx)
 
-    avg_match = sum(match_scores) / len(match_scores)
+    avg_match = sum(weighted_scores) / sum(weights)
 
     # Check vertical ordering consistency
     # For matched pairs, verify they appear in the same relative order
