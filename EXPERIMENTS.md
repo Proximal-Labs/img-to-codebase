@@ -353,3 +353,54 @@ The RL model consistently produces better layout structure, more accurate text c
 ### Notes
 - Some WebSight examples reference external images (Unsplash URLs) that don't load — renders blank. Affects ~1-2% of examples. Could filter in future.
 - KL_BETA 0.05 was too high — KL dropped to 0.006 meaning the penalty was barely active. Lowered default to 0.02 for future runs.
+
+---
+
+## Experiment 10: Overnight Run — More Data, Improved Reward ✓ BEST RESULT
+
+**Goal:** Resume from exp 9 batch-90 checkpoint, train 200 more batches on 3x the data with improved reward.
+
+### Setup
+- **Resumed from** exp 9 batch-90 checkpoint
+- **200 batches** (~1600 unique examples)
+- **2983 examples** (2893 WebSight v0.2 + 90 Design2Code <16K chars)
+- KL_BETA lowered to 0.02
+- MAX_TOKENS 8192, MAX_HTML_CHARS 16000
+
+### Reward Function v6
+```
+0.20 * global text match (SequenceMatcher on all visible text)
+0.15 * styled text match (text + font size/weight/color per element)
+0.25 * layout score (size similarity + relative ordering, tag-weighted)
+0.20 * color palette similarity (quantized histogram)
+0.20 * visual SSIM+MSE
+```
+
+Changes from v5:
+- **Styled text signal** — matches text blocks by content, then scores font size ratio, font weight match, text color similarity
+- **Relative ordering** in layout — compares element sizes + vertical order instead of absolute bounding box positions (robust to cascading offset errors)
+- **Tag-weighted layout** — headings, buttons, inputs weighted higher than generic divs
+- **Invisible element filtering** — skips `display:none`, `visibility:hidden`, `opacity:0`
+- **Block dedup disabled** — was too aggressive, removed content-bearing elements
+
+### Results
+- **Training:** reward climbed from 0.1 → 0.68 over 200 batches (still climbing at end)
+- **Eval:** Base 0.429, RL 0.596, **improvement +0.167, RL wins 8/10**
+- **Model path:** `tinker://8d1edefb-7b10-5af2-b378-c470421d4982:train:0/sampler_weights/prox-final`
+
+### Observations
+- RL model produces correct text content and layout structure
+- **Weakness:** buttons and styled elements lose their visual styling (colors, border-radius, padding). Model outputs minimal unstyled buttons instead of matching the reference styling
+- **Root cause:** reward weights text/layout heavily but element-level styling (button bg color, section bg color) is only captured by the global color palette, which doesn't penalize *which* element lost its color
+- **Next:** add per-element background color to styled_text comparison
+
+### Updated Results Summary
+
+| Exp | Model | Batches | Reward Fn | Eval Improvement | RL Wins |
+|-----|-------|---------|-----------|-----------------|---------|
+| 1 | 4B | 21 | Pixel SSIM+MSE | N/A | N/A |
+| 2 | 4B | 31 | Pixel SSIM+MSE | +0.080 | 6/10 |
+| 3 | 27B | 182 | 8-signal DOM+CLIP | +0.032 | 6/10 |
+| 7 | 27B | 30 | Pure DOM (no CLIP) | +0.082 | 7/10 |
+| 9 | 27B | 90 | Pure DOM+Tailwind+live ref | +0.231 | 9/10 |
+| **10** | **27B** | **200+90** | **Styled text + relative ordering** | **+0.167** | **8/10** |
