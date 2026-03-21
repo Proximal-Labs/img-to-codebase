@@ -233,41 +233,50 @@ def run_agent_generate(
             initial_ssim = compute_ssim(ref_arr, gen_img)
 
             # Find the worst steps (lowest SSIM)
-            step_ssims = [(r["step"], r["ssim"], r.get("action", "")) for r in step_results if "ssim" in r]
+            step_ssims = [(r["step"], r["ssim"], r.get("action", ""), r.get("gen_img")) for r in step_results if "ssim" in r]
             avg_ssim = np.mean([s[1] for s in step_ssims]) if step_ssims else initial_ssim
 
             if avg_ssim > 0.85:
                 break  # Good enough
 
-            # Build feedback with flow context — show worst failing steps
+            # Build feedback with flow context
             feedback_content = []
+
+            # Summary
+            step_summary = "\n".join(
+                f"  Step {s[0]} [{s[2][:40]}]: SSIM={s[1]:.0%}" + (" ← FAILING" if s[1] < 0.6 else "")
+                for s in step_ssims
+            )
             feedback_content.append({"type": "text", "text": (
-                f"I ran your HTML through the user flow. Results:\n"
-                f"  Initial page SSIM: {initial_ssim:.0%}\n"
+                f"I ran your HTML through the user flow. Here are the results:\n"
+                f"  Initial page SSIM: {initial_ssim:.0%}\n{step_summary}\n"
+                f"  Overall: {avg_ssim:.0%}\n\n"
+                f"Below are the top 3 issues. For each: your output (left) vs what it should look like (right).\n"
             )})
 
-            # Add initial diff
-            diff_img = make_diff_image(ref_arr, gen_img, threshold=25)
-            diff_b64 = pil_to_base64(Image.fromarray(diff_img))
-            feedback_content.append({"type": "text", "text": "Initial page diff (red = differences):"})
-            feedback_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{diff_b64}"}})
-
-            # Show up to 3 worst interaction steps with their reference screenshots
+            # Show up to 3 worst steps — both generated and reference side by side
             worst_steps = sorted(step_ssims, key=lambda x: x[1])[:3]
-            for step_idx, ssim_val, action_desc in worst_steps:
+            for step_idx, ssim_val, action_desc, gen_step_img in worst_steps:
                 if step_idx < len(actions) and actions[step_idx].get("screenshot"):
                     ref_step_img = actions[step_idx]["screenshot"].resize((VIEWPORT["width"], VIEWPORT["height"]))
                     ref_step_b64 = pil_to_base64(ref_step_img)
+
                     feedback_content.append({"type": "text", "text": (
-                        f"\nStep {step_idx} — {action_desc}: SSIM={ssim_val:.0%} (FAILING)"
-                        f"\nHere's what this step should look like:"
+                        f"\n--- Issue: Step {step_idx} — {action_desc} (SSIM={ssim_val:.0%}) ---"
+                        f"\nYour page at this step:"
                     )})
+
+                    # Generated page screenshot at this step
+                    if gen_step_img is not None:
+                        gen_step_b64 = pil_to_base64(Image.fromarray(gen_step_img))
+                        feedback_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{gen_step_b64}"}})
+
+                    feedback_content.append({"type": "text", "text": "What it should look like:"})
                     feedback_content.append({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{ref_step_b64}"}})
 
             feedback_content.append({"type": "text", "text": (
-                f"\nOverall flow SSIM: {avg_ssim:.0%}. "
-                f"The interactions aren't working correctly. "
-                f"List what needs to change to make the user flow work."
+                f"\nAnalyze each issue above. What's different between your output and the target? "
+                f"What interactions are broken? List the fixes needed."
             )})
 
             # Analyze
@@ -350,17 +359,19 @@ def run_action_sequence(page, actions: list[dict], out_dir: str) -> list[dict]:
 
         ssim_score = compute_ssim(ref_arr, gen_img)
 
-        # Save
-        Image.fromarray(gen_img).save(os.path.join(out_dir, f"step_{i}_gen.png"))
-        Image.fromarray(ref_arr).save(os.path.join(out_dir, f"step_{i}_ref.png"))
-        diff_img = make_diff_image(ref_arr, gen_img, threshold=25)
-        Image.fromarray(diff_img).save(os.path.join(out_dir, f"step_{i}_diff.png"))
+        # Save if output dir provided
+        if out_dir:
+            Image.fromarray(gen_img).save(os.path.join(out_dir, f"step_{i}_gen.png"))
+            Image.fromarray(ref_arr).save(os.path.join(out_dir, f"step_{i}_ref.png"))
+            diff_img = make_diff_image(ref_arr, gen_img, threshold=25)
+            Image.fromarray(diff_img).save(os.path.join(out_dir, f"step_{i}_diff.png"))
 
         results.append({
             "step": i,
             "action": action["repr"],
             "op": action["op"],
             "ssim": ssim_score,
+            "gen_img": gen_img,  # store for feedback
         })
 
         # Execute action
