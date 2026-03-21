@@ -52,7 +52,8 @@ logger = logging.getLogger(__name__)
 
 MAX_TURNS = int(os.environ.get("MAX_TURNS", 2))
 TOKENS_PER_TURN = int(os.environ.get("TOKENS_PER_TURN", 4096))
-MAX_FLOW_IMAGES = 5
+MAX_FLOW_IMAGES = 3
+MAX_ACTION_STEPS = 3  # Cap action steps during training for speed
 VIEWPORT = {"width": 1280, "height": 720}
 
 SYSTEM_PROMPT = (
@@ -166,9 +167,9 @@ def build_flow_prompt(actions, renderer):
 
 
 def run_actions_on_page(page, actions):
-    """Run action sequence, return per-step SSIM and screenshots."""
+    """Run action sequence (capped at MAX_ACTION_STEPS), return per-step SSIM and screenshots."""
     results = []
-    for i, action in enumerate(actions):
+    for i, action in enumerate(actions[:MAX_ACTION_STEPS]):
         ref_screenshot = action.get("screenshot")
         if ref_screenshot is None:
             continue
