@@ -486,8 +486,8 @@ def compute_reward_from_info(ref_info: dict, gen_info: dict) -> tuple[float, dic
         "color": color_palette_similarity(ref_info["colors"], gen_info["colors"]),
     }
 
-    # 0.60 SSIM + 0.25 text + 0.15 color
-    raw = 0.60 * details["ssim"] + 0.25 * details["text"] + 0.15 * details["color"]
+    # 0.80 SSIM + 0.10 text + 0.10 color
+    raw = 0.80 * details["ssim"] + 0.10 * details["text"] + 0.10 * details["color"]
 
     # Scale to [-1, 1]
     reward = 2.0 * raw - 1.0
