@@ -492,85 +492,39 @@ GPT-5.4 crushes hard D2C pages — generates 1-4K chars of simplified HTML that 
 
 ## Part 2: Interactive Flow Evaluation (Mind2Web)
 
-### Experiment 14: Mind2Web Screenplay Eval
+### Setup
 
-**Goal:** Move beyond static screenshot comparison to interactive evaluation — does the generated page work when you click through it?
+Extended the single-screenshot approach to full user flow trajectories. Each task is a sequence of screenshots + actions from real websites (via [Mind2Web](https://huggingface.co/datasets/osunlp/Multimodal-Mind2Web)). The model sees interleaved screenshots and action descriptions, generates interactive HTML/JS, and we execute the actions via Playwright and compare SSIM at each step.
 
-### What We Built
+Same multi-turn analyze-fix loop, but the feedback now runs the full action sequence and shows the model which interactions failed.
 
-Loaded real website tasks from [Multimodal-Mind2Web](https://huggingface.co/datasets/osunlp/Multimodal-Mind2Web) (2,350 tasks, 137 websites). Each task has:
-- Action sequences (click, type, select) with selectors
-- Screenshots at each step
-- Full HTML/DOM
+### Results
 
-The eval pipeline:
-1. Show model up to 5 interleaved flow screenshots ("Step 1 — initial load [img], Step 2 — click Search [img]...")
-2. Model generates interactive HTML with JavaScript
-3. Run action sequence via Playwright on the generated page
-4. Compare SSIM at each action step against reference screenshots
-5. Flow-based analyze: find 3 worst steps, show model "your output vs target" side-by-side
-6. Model fixes and we re-evaluate
+Ran on GPT-5.4, Claude Opus 4.6, and Qwen 3.5 (4B/27B):
 
-### Critical Bug Found: Playwright Action Runner
+| Model | Initial SSIM | Generates JS? | Notes |
+|-------|-------------|---------------|-------|
+| GPT-5.4 | 0.68 | Yes (18-22 handlers) | Best visual fidelity |
+| Opus 4.6 | 0.40 | Yes (21 handlers, full multi-page app) | Most ambitious code |
+| Qwen 27B | 0.24 | No | Static HTML only |
+| Qwen 4B | 0.23 | No | Static HTML only |
 
-74% of Mind2Web actions had `selector=None`. Our runner only tried CSS selectors, so **most clicks never fired**. All previous step SSIM scores were artificially low — the models had working JavaScript but we weren't triggering it.
+Frontier models generate genuinely interactive pages with click handlers and state management. Qwen models (both sizes) produce zero JavaScript — this is the gap RL training needs to close.
 
-**Fix:** Text-based matching — extract element text from action description (e.g., "Marketplace" from `[button] Marketplace -> CLICK`), then try `get_by_text()`, `get_by_role()` before falling back to bbox coordinates. Covers 95% of actions.
+Found and fixed a harness bug where 74% of clicks weren't firing due to missing CSS selectors. Switched to text-based Playwright matching. Re-evaluating with the fix now.
 
-### What Models Actually Generated
-
-| Model | Initial SSIM | JS Handlers | Interactive? |
-|-------|-------------|-------------|-------------|
-| GPT-5.4 | 0.68 | 18-22 | Yes — click handlers, state management |
-| Opus 4.6 | 0.40 | 21 | Yes — full multi-page app with `showPage()` routing |
-| Qwen 27B | 0.24 | 0 | No |
-| Qwen 4B | 0.23 | 0 | No |
-
-**Key finding:** Frontier models (GPT-5.4, Opus) generate genuinely interactive pages. Opus built a 31K char app with marketplace navigation, filtering, cart, and checkout — all from flow screenshots. Our harness just couldn't click the buttons.
-
-Qwen models (4B and 27B) generate zero JavaScript — the gap isn't model size, it's capability.
-
-### Mind2Web Eval Results (with text-matching fix)
-
-Re-evaluating with fixed action runner. Previous results were invalid due to the selector bug.
-
-*(Results pending — runs in progress)*
-
-### Analyze Step: Flow-Based Feedback
-
-Instead of just diffing the initial screenshot, the analyze step now:
-1. Runs the full action sequence on the generated HTML
-2. Computes per-step SSIM
-3. Finds the 3 worst-scoring steps
-4. Shows the model side-by-side: "Your page at step 3:" [gen img] "What it should look like:" [ref img]
-5. Model analyzes what interactions are broken and fixes
-
-This is much closer to Cloning Bench's approach — the agent gets told specifically which interactions failed.
+Running larger experiments overnight.
 
 ---
 
 ## Key Learnings
 
-### Part 1: Screenshot → HTML Agent
+1. **SSIM-anchored reward works best** — DOM comparison penalized visually correct outputs. If it looks right, it IS right. `0.60 SSIM + 0.25 text + 0.15 color`.
 
-1. **SSIM is the right anchor for reward** — complex DOM comparison penalized visually correct outputs. Keep it simple: if it looks right, it IS right.
+2. **Analyze-then-fix > direct fix** — splitting "what's wrong" from "fix it" prevents regression across turns.
 
-2. **Don't over-engineer the reward** — we went from 2 signals → 8 signals → 5 signals → back to 3 signals. The simplest version (SSIM + text + color) works best.
+3. **Benchmark against frontier models early** — revealed our reward was broken and our harness wasn't clicking buttons.
 
-3. **Always benchmark against frontier models** — running GPT-5.4 on our eval revealed the DOM reward was broken. Should have done this from the start.
+4. **Models output short code regardless of source complexity** — 1-4K chars of HTML to match 100K+ char source pages. No dataset filtering needed.
 
-4. **Analyze-then-fix > direct fix** — splitting visual analysis from code generation prevents regression and gives consistent improvement across turns.
-
-5. **Output is always short** — models generate 1-4K chars regardless of source page complexity (100K+ chars). No need to filter by source length.
-
-6. **Multi-turn is expensive but higher quality** — 3 turns × analyze-fix = 9 API calls per rollout. Slower but the training signal is much richer.
-
-### Part 2: Interactive Flow Eval
-
-7. **Test your harness before blaming the model** — the Playwright selector bug made it look like no model could generate interactive pages. In reality, GPT-5.4 and Opus were building working apps.
-
-8. **Text-based element matching > CSS selectors** — real-world datasets often lack clean selectors. `get_by_text("Marketplace")` is more robust than `#nav-marketplace`.
-
-9. **Frontier models generate interactive code from screenshots** — GPT-5.4 and Opus produce JavaScript with click handlers, state management, and multi-page routing from just flow screenshots. This is the target for RL training.
-
-10. **Show the full flow, not just the first screenshot** — models need to see what happens after interactions to generate working JavaScript. Interleaving screenshots with action descriptions is the right prompt format.
+5. **Test the harness, not just the model** — a Playwright bug made it look like no model could generate interactive pages.
