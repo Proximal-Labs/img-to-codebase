@@ -192,18 +192,27 @@ def run_agent_rollout(
         diff_mask = np.any(np.abs(ref_render.astype(int) - gen_render.astype(int)) > 25, axis=2)
         diff_pct = diff_mask.sum() / diff_mask.size
 
-        # Step 1: Show diff + ref, ask model to ANALYZE
+        # Step 1: Show ref + generated + diff, ask model to ANALYZE
+        gen_pil = Image.fromarray(gen_render)
         convo.append({"role": "assistant", "content": content})
         convo.append({
             "role": "user",
             "content": [
-                {"type": "image", "image": ref_pil},
-                {"type": "image", "image": diff_pil},
                 {"type": "text", "text": (
                     f"Visual similarity: {ssim_score:.0%} ({diff_pct:.0%} of pixels differ).\n\n"
-                    f"Above: target screenshot and diff image (red = differences).\n\n"
-                    f"List the specific visual differences — wrong colors, missing elements, "
-                    f"incorrect sizing, layout issues. Be concise."
+                    f"Here is the target (what it should look like):"
+                )},
+                {"type": "image", "image": ref_pil},
+                {"type": "text", "text": "Here is your output:"},
+                {"type": "image", "image": gen_pil},
+                {"type": "text", "text": (
+                    "Here is the diff (red = where your output differs from the target):"
+                )},
+                {"type": "image", "image": diff_pil},
+                {"type": "text", "text": (
+                    "List the top 3 things that need to be fixed. Be specific — "
+                    "e.g. 'heading font size is too large', 'nav background should be #333', "
+                    "'missing footer section'. Be concise."
                 )},
             ],
         })
