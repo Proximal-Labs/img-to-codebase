@@ -211,7 +211,7 @@ def run_agent_generate(
         current_html = None
         for turn in range(max_turns):
             response = client_or_sampler.chat.completions.create(
-                model=openai_model, messages=messages, max_completion_tokens=4096, temperature=0.3,
+                model=openai_model, messages=messages, max_completion_tokens=16384, temperature=0.3,
             )
             content = response.choices[0].message.content
             current_html = extract_html_from_response(content)
