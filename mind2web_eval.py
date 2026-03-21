@@ -239,11 +239,15 @@ def run_agent_generate(
                         if isinstance(content, list):
                             content = _convert_content_for_anthropic(content)
                         api_msgs.append({"role": m["role"], "content": content})
-                resp = client_or_sampler.messages.create(
+                # Use streaming for Anthropic to avoid timeout on long generations
+                text = ""
+                with client_or_sampler.messages.stream(
                     model=openai_model, system=system, messages=api_msgs,
                     max_tokens=max_tokens, temperature=0.3,
-                )
-                return resp.content[0].text
+                ) as stream:
+                    for chunk in stream.text_stream:
+                        text += chunk
+                return text
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT_AGENT},
