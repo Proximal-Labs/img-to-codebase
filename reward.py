@@ -456,19 +456,11 @@ def _get_content_bbox(img_arr: np.ndarray, bg_color: int = 255, margin: int = 5)
 
 
 def visual_similarity(ref_img: np.ndarray, gen_img: np.ndarray) -> float:
-    y0, y1, x0, x1 = _get_content_bbox(ref_img)
-    ref_crop = ref_img[y0:y1, x0:x1]
-    gen_crop = gen_img[y0:y1, x0:x1]
-
-    mse = np.mean((ref_crop.astype(float) - gen_crop.astype(float)) ** 2) / (255.0 ** 2)
-    pixel_score = 1.0 - mse
-
-    if ref_crop.shape[0] >= 7 and ref_crop.shape[1] >= 7:
-        ssim_score = ssim(ref_crop, gen_crop, channel_axis=2, data_range=255)
-    else:
-        ssim_score = pixel_score
-
-    return float(0.3 * pixel_score + 0.7 * ssim_score)
+    """Straight SSIM on full images, no cropping."""
+    if ref_img.shape != gen_img.shape:
+        from PIL import Image
+        gen_img = np.array(Image.fromarray(gen_img).resize((ref_img.shape[1], ref_img.shape[0])))
+    return float(ssim(ref_img, gen_img, channel_axis=2, data_range=255))
 
 
 # ── Combined reward ──────────────────────────────────────────────────────────
@@ -486,8 +478,8 @@ def compute_reward_from_info(ref_info: dict, gen_info: dict) -> tuple[float, dic
         "color": color_palette_similarity(ref_info["colors"], gen_info["colors"]),
     }
 
-    # 0.80 SSIM + 0.10 text + 0.10 color
-    raw = 0.80 * details["ssim"] + 0.10 * details["text"] + 0.10 * details["color"]
+    # Pure SSIM
+    raw = details["ssim"]
 
     # Scale to [-1, 1]
     reward = 2.0 * raw - 1.0
