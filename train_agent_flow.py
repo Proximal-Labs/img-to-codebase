@@ -139,11 +139,8 @@ def build_flow_prompt(actions, renderer):
     """Build interleaved flow screenshot + action description content."""
     steps = [(i, a) for i, a in enumerate(actions) if a.get("screenshot")]
     if len(steps) > MAX_FLOW_IMAGES:
-        selected = [steps[0]]
-        middle = steps[1:-1]
-        step_size = max(1, len(middle) // (MAX_FLOW_IMAGES - 2))
-        selected.extend(middle[::step_size][:MAX_FLOW_IMAGES - 2])
-        selected.append(steps[-1])
+        # Just take first N
+        selected = steps[:MAX_FLOW_IMAGES]
     else:
         selected = steps
 
