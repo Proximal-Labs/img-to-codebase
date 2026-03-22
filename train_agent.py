@@ -78,36 +78,10 @@ def load_dataset(manifest_path: str) -> list[dict]:
 
 
 def load_training_data() -> list[dict]:
-    """Load structured training split: basic + medium + hard WebSight + D2C."""
-    n_basic = int(os.environ.get("N_BASIC", 16))
-    n_medium = int(os.environ.get("N_MEDIUM", 100))
-    n_hard = int(os.environ.get("N_HARD", 32))
-    n_d2c = int(os.environ.get("N_D2C", 16))
-
-    ws = load_dataset(MANIFEST_PATH)
-    basic = [x for x in ws if len(x.get("html", "")) < 800]
-    medium = [x for x in ws if 800 <= len(x.get("html", "")) < 1500]
-    hard = [x for x in ws if len(x.get("html", "")) >= 1500]
-
-    random.shuffle(basic)
-    random.shuffle(medium)
-    random.shuffle(hard)
-
-    dataset = basic[:n_basic] + medium[:n_medium] + hard[:n_hard]
-    logger.info(f"  WebSight: {min(n_basic, len(basic))} basic, "
-                f"{min(n_medium, len(medium))} medium, {min(n_hard, len(hard))} hard")
-
-    if os.path.exists(DESIGN2CODE_MANIFEST):
-        d2c = load_dataset(DESIGN2CODE_MANIFEST)
-        # No length filter — model generates short HTML regardless of source length
-        random.shuffle(d2c)
-        d2c_sample = d2c[:n_d2c]
-        dataset.extend(d2c_sample)
-        logger.info(f"  Design2Code: {len(d2c_sample)} (of {len(d2c)} available)")
-
-    # Curriculum: sort by HTML length
-    dataset.sort(key=lambda x: len(x.get("html", "")))
-    logger.info(f"  Total: {len(dataset)} examples")
+    """Load training data from MANIFEST_PATH."""
+    dataset = load_dataset(MANIFEST_PATH)
+    random.shuffle(dataset)
+    logger.info(f"  Loaded {len(dataset)} examples from {MANIFEST_PATH}")
     return dataset
 
 
