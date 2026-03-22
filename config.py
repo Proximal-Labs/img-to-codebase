@@ -31,7 +31,7 @@ MAX_HTML_CHARS = int(os.environ.get("MAX_HTML_CHARS", 16000))
 # ── Paths ─────────────────────────────────────────────────────────────────────
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(PROJECT_DIR, "data")
-MANIFEST_PATH = os.path.join(DATA_DIR, "manifest.json")
+MANIFEST_PATH = os.environ.get("MANIFEST_PATH", os.path.join(DATA_DIR, "manifest.json"))
 DESIGN2CODE_DIR = os.path.join(DATA_DIR, "design2code")
 DESIGN2CODE_MANIFEST = os.path.join(DESIGN2CODE_DIR, "manifest.json")
 LOG_DIR = os.environ.get("LOG_DIR", os.path.join(PROJECT_DIR, "runs"))
