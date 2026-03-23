@@ -91,26 +91,23 @@ The model's self-analysis was specific and accurate:
 
 Model sees multiple screenshots showing a user flow, generates interactive HTML with JavaScript.
 
-### GPT-5.4 on Budget Car Rental (16 action steps!)
+### GPT-5.4 on Budget Car Rental (SSIM 0.782)
 
-| Step | Action | SSIM | Screenshot |
-|------|--------|------|------------|
-| Initial | Page load | 0.764 | ![step0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_00/step_0_gen.png) |
-| Reference for initial: | | | ![ref0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_00/step_0_ref.png) |
+| Reference | GPT-5.4 Generated |
+|-----------|-------------------|
+| ![ref](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_00/step_0_ref.png) | ![gen](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_00/step_0_gen.png) |
 
-### GPT-5.4 on SpotHero Parking (8 action steps)
+### GPT-5.4 on Rotten Tomatoes (SSIM 0.470)
 
-| Step | Action | SSIM | Screenshot |
-|------|--------|------|------------|
-| Initial | Page load | 0.865 | ![step0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_01/step_0_gen.png) |
-| Reference: | | | ![ref0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_01/step_0_ref.png) |
+| Reference | GPT-5.4 Generated |
+|-----------|-------------------|
+| ![ref](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_02/step_0_ref.png) | ![gen](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_02/step_0_gen.png) |
 
-### GPT-5.4 on Resy (3 action steps)
+### GPT-5.4 on Resy (SSIM 0.817)
 
-| Step | Action | SSIM | Screenshot |
-|------|--------|------|------------|
-| Initial | Page load | 0.817 | ![step0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_04/step_0_gen.png) |
-| Reference: | | | ![ref0](eval_output/flow_interactive/mind2web-gpt54-flow-analyze-v2/task_04/step_0_ref.png) |
+| Reference | GPT-5.4 Generated |
+|-----------|-------------------|
+| ![ref](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_04/step_0_ref.png) | ![gen](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_04/step_0_gen.png) |
 
 ---
 
@@ -166,8 +163,21 @@ GPT-5.4 produced SSIM 0.991 (pixel-perfect) but our DOM reward scored -0.5. This
 | Challenge | Solution |
 |-----------|----------|
 | DOM reward broke on pixel-perfect outputs | Pure SSIM reward |
+| Pure SSIM reward hacking (blank pages score high) | Penalize low pixel variance (std < 10) |
 | Playwright selectors=None (74% of clicks failed) | Text-based matching |
 | Mind2Web raw_html has no CSS (DOM dump) | Compare against original screenshots |
 | 27B multi-image: 4.5 hrs/batch | One-shot single image, parallel sampling |
 | HTML cutoff (white screens) | 16K token limit |
 | Viewport sizes causing bad comparisons | 1024x768 or 1280x720 standard |
+
+## 9. Next Steps
+
+1. **SSIM is a great reward, but you need to prevent hacking.** The model learned to generate blank pages that score high SSIM against light backgrounds. Simple fix (pixel variance check) works but more sophisticated checks may be needed at scale.
+
+2. **Custom rewards are valuable but must be carefully constructed.** DOM-based rewards captured real signal (text match, layout, colors) but penalized visually identical outputs when the internals differed. The lesson: custom rewards should never contradict SSIM — if it looks right, the reward should be high regardless of how the HTML is structured internally.
+
+3. **Scale training on harder datasets.** Mind2Web real websites are the right difficulty level. WebSight/D2C are too easy — models already score well without RL.
+
+4. **Agentic multi-turn with analyze-fix at inference time.** Train one-shot for speed, add the analyze-fix loop at inference time for quality. The analyze step costs one extra API call but prevents regression.
+
+5. **Interactive flow training needs faster infrastructure.** 27B with multi-image prompts is 4.5 hrs/batch. Either use smaller models for flow training or wait for faster inference.
