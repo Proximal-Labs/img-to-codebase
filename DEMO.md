@@ -79,6 +79,24 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 *Note: batch 10 model was trained with 2K token limit (HTML cutoff issues) and without blank page penalty. Later runs fix both.*
 
+### 27B on WebSight + Design2Code (90 batches, best early result)
+
+> **Experiment details:**
+> - Model: Qwen 3.5-27B (LoRA rank 32)
+> - Reward: DOM-based (0.30 text + 0.30 layout + 0.20 color + 0.20 visual SSIM)
+> - Context: 1024 tokens
+> - Data: 1011 examples (974 WebSight v2 + 37 Design2Code), curriculum ordered
+> - Viewport: 1024x768
+> - Result: **+0.231 improvement, 9/10 wins** at batch 75 checkpoint
+
+| Reference | Base (27B untrained) | RL (batch 75) | Delta |
+|-----------|---------------------|---------------|-------|
+| ![ref](eval_output/single_image_rl/exp9-batch75/example_02/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_02/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_02/rl.png) | +0.199 |
+| ![ref](eval_output/single_image_rl/exp9-batch75/example_06/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_06/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_06/rl.png) | +0.749 |
+| ![ref](eval_output/single_image_rl/exp9-batch75/example_09/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_09/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_09/rl.png) | +0.469 |
+| ![ref](eval_output/single_image_rl/exp9-batch75/example_00/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_00/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_00/rl.png) | +0.079 |
+| ![ref](eval_output/single_image_rl/exp9-batch75/example_03/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_03/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_03/rl.png) | +0.035 |
+
 ---
 
 ## 3. Task 2: Multi-Turn Analyze-Fix Agent
@@ -127,36 +145,9 @@ Model sees multiple screenshots showing a user flow, generates interactive HTML 
 
 ---
 
-## 5. Long Training Runs
-
-### Experiment 9: 27B on WebSight + D2C (Best Early Result)
-90 batches, reward climbed steadily. **+0.231 improvement, 9/10 wins.**
-
-| Example | Base | RL | Delta |
-|---------|------|-----|-------|
-| ![ref](eval_output/single_image_rl/exp9-batch75/example_02/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_02/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_02/rl.png) | +0.199 |
-| ![ref](eval_output/single_image_rl/exp9-batch75/example_06/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_06/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_06/rl.png) | +0.749 |
-| ![ref](eval_output/single_image_rl/exp9-batch75/example_09/ref-render.png) | ![base](eval_output/single_image_rl/exp9-batch75/example_09/base.png) | ![rl](eval_output/single_image_rl/exp9-batch75/example_09/rl.png) | +0.469 |
-
-### Current Run: 4B on Mind2Web (Real Websites)
-One-shot, pure SSIM reward, 500 Mind2Web landing pages. Training live.
-
-```
-Batch 0:  reward=0.118
-Batch 5:  reward=-0.063  (checkpoint saved)
-Batch 10: reward=-0.123  (checkpoint saved)
-Batch 12: reward=0.062   (climbing back)
-```
-
 ---
 
-## 6. Frontier Model Comparisons
-
-### GPT-5.4 on Hard Design2Code
-Avg reward 0.716, SSIM 0.906. Generates 1-4K chars for 100K+ char source pages.
-
-| Reference | GPT-5.4 Generated | SSIM |
-|-----------|--------------------|------|
+## 5. Frontier Model Comparisons
 | ![ref](eval_output/frontier_baselines/gpt54-hard-d2c/task_00/reference.png) | ![gen](eval_output/frontier_baselines/gpt54-hard-d2c/task_00/turn1.png) | 0.930 |
 | ![ref](eval_output/frontier_baselines/gpt54-hard-d2c/task_01/reference.png) | ![gen](eval_output/frontier_baselines/gpt54-hard-d2c/task_01/turn1.png) | 0.776 |
 | ![ref](eval_output/frontier_baselines/gpt54-hard-d2c/task_05/reference.png) | ![gen](eval_output/frontier_baselines/gpt54-hard-d2c/task_05/turn1.png) | 0.941 |
