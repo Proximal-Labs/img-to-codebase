@@ -159,7 +159,14 @@ def main():
                     try:
                         render_html(page, html)
                         gen_img = take_screenshot(page)
-                        reward = 2.0 * compute_ssim(ref_img, gen_img) - 1.0  # Scale to [-1, 1]
+
+                        # Penalize blank pages (all white or all black = reward hacking)
+                        pixel_mean = gen_img.mean()
+                        pixel_std = gen_img.std()
+                        if pixel_std < 10:  # Nearly uniform color = blank page
+                            reward = -1.0
+                        else:
+                            reward = 2.0 * compute_ssim(ref_img, gen_img) - 1.0
                     except Exception:
                         reward = -1.0
 
