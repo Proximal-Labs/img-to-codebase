@@ -125,7 +125,22 @@ The model's self-analysis was specific and accurate:
 
 Model sees multiple screenshots showing a user flow, generates interactive HTML with JavaScript.
 
-### GPT-5.4 on Budget Car Rental (SSIM 0.782)
+### Example: Budget Car Rental User Flow (6 steps)
+
+The reference flow shows a user booking a luxury car rental — the page changes completely at each step:
+
+**Step 1 — Landing page** (search form, promo banner)
+![step0](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_00/step_0_ref.png)
+
+**Step 3 — Location search** (typed location, dropdown with airport suggestions)
+![step2](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_00/step_2_ref.png)
+
+**Step 5 — Car selection** (completely different page: progress bar, car listing with Chrysler 300)
+![step4](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_00/step_4_ref.png)
+
+### GPT-5.4 Generated Landing Page (SSIM 0.782)
+
+The model saw all flow screenshots and generated HTML that matches the initial state:
 
 | Reference | GPT-5.4 Generated |
 |-----------|-------------------|
