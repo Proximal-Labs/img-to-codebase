@@ -81,19 +81,19 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 |-----------|-------------------|--------------------------|
 | ![ref](eval_output/single_image_rl/4b-base-simple/example_06/ref.png) | ![base](eval_output/single_image_rl/4b-base-simple/example_06/gen.png) | ![rl](eval_output/single_image_rl/4b-simple-batch10/example_06/gen.png) |
 
-| Site | Base SSIM | RL SSIM | Delta |
-|------|-----------|---------|-------|
-| Resy | 0.816 | **0.849** | +0.033 |
-| FoxSports | 0.473 | 0.381 | -0.092 |
-| UnderArmour | 0.520 | **0.527** | +0.007 |
-| IKEA | 0.580 | 0.480 | -0.100 |
-| Yelp | 0.468 | 0.429 | -0.039 |
-| eBay | 0.727 | 0.603 | -0.124 |
-| Carnival | 0.588 | 0.463 | -0.125 |
-| Rentalcars | 0.564 | 0.478 | -0.086 |
-| Viator | 0.334 | **0.376** | +0.042 |
-| SoundCloud | 0.206 | **0.545** | +0.339 |
-| **Average** | **0.528** | **0.513** | **-0.015** |
+| Site | Base SSIM | RL SSIM | SSIM Delta | Base Reward | RL Reward | Reward Delta |
+|------|-----------|---------|------------|-------------|-----------|--------------|
+| Resy | 0.816 | **0.849** | +0.033 | 0.632 | **0.699** | +0.067 |
+| FoxSports | 0.473 | 0.381 | -0.092 | -0.055 | -0.237 | -0.182 |
+| UnderArmour | 0.520 | **0.527** | +0.007 | 0.039 | -0.040 | -0.079 |
+| IKEA | 0.580 | 0.480 | -0.100 | 0.160 | -0.040 | -0.200 |
+| Yelp | 0.468 | 0.429 | -0.039 | -0.063 | -0.142 | -0.079 |
+| eBay | 0.727 | 0.603 | -0.124 | 0.453 | 0.207 | -0.246 |
+| Carnival | 0.588 | 0.463 | -0.125 | 0.176 | -0.074 | -0.250 |
+| Rentalcars | 0.564 | 0.478 | -0.086 | 0.128 | -0.044 | -0.172 |
+| Viator | 0.334 | **0.376** | +0.042 | -0.333 | -0.248 | +0.085 |
+| SoundCloud | 0.206 | **0.545** | +0.339 | -0.588 | **0.090** | +0.678 |
+| **Average** | **0.528** | **0.513** | **-0.015** | **0.055** | **0.017** | **-0.038** |
 
 *Note: batch 10 model was trained with 2K token limit (HTML cutoff issues) and without blank page penalty. Later runs fix both.*
 
