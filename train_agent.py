@@ -11,6 +11,7 @@ Each rollout is up to MAX_TURNS attempts:
 The model never sees the reward score — only visual diff feedback.
 """
 
+import io
 import json
 import logging
 import os
@@ -26,10 +27,9 @@ from tinker.types.tensor_data import TensorData
 from PIL import Image
 from playwright.sync_api import sync_playwright
 from tqdm import tqdm
-from transformers import AutoImageProcessor
+from transformers import AutoProcessor
 
 from tinker_cookbook import renderers
-from tinker_cookbook.renderers import get_text_content
 from tinker_cookbook.tokenizer_utils import get_tokenizer
 
 from config import (
@@ -41,8 +41,97 @@ from config import (
 from reward import (
     compute_reward_from_info, extract_html_from_response,
     extract_ref_info, extract_gen_info, render_html_to_image,
-    make_diff_image,
 )
+
+
+def get_text_content(msg: dict) -> str:
+    """Extract text content from a parsed message dict."""
+    content = msg.get("content", "")
+    if isinstance(content, list):
+        return " ".join(c.get("text", "") for c in content if isinstance(c, dict) and c.get("type") == "text")
+    return str(content)
+
+
+IMAGE_PAD_TOKEN = 248056  # <|image_pad|> for Qwen3.5
+
+
+def pil_to_png_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+_vlm_processor = None
+_vlm_tokenizer = None
+_vlm_disable_thinking = True
+
+
+def init_vlm(processor, tokenizer, disable_thinking=True):
+    global _vlm_processor, _vlm_tokenizer, _vlm_disable_thinking
+    _vlm_processor = processor
+    _vlm_tokenizer = tokenizer
+    _vlm_disable_thinking = disable_thinking
+
+
+def build_vlm_prompt(messages: list[dict]) -> types.ModelInput:
+    """
+    Build a tinker ModelInput with interleaved text and image chunks
+    for Qwen3.5 VLM models.
+    """
+    proc, tok = _vlm_processor, _vlm_tokenizer
+
+    # Collect all images in order
+    images = []
+    for msg in messages:
+        content = msg.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image":
+                    images.append(part["image"])
+
+    # Get tokenized text with image placeholders
+    text = proc.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True,
+    )
+    if _vlm_disable_thinking:
+        text = text.replace("<think>\n", "")
+
+    token_ids = tok.encode(text, add_special_tokens=False)
+
+    # Count expected image tokens per image
+    img_token_counts = []
+    for img in images:
+        test_msgs = [{"role": "user", "content": [
+            {"type": "image", "image": img}, {"type": "text", "text": "x"},
+        ]}]
+        test_text = proc.apply_chat_template(test_msgs, tokenize=False, add_generation_prompt=True)
+        test_inputs = proc(text=[test_text], images=[img], return_tensors="pt")
+        n_img_tokens = (test_inputs["input_ids"] == IMAGE_PAD_TOKEN).sum().item()
+        img_token_counts.append(n_img_tokens)
+
+    # Split tokens into chunks around IMAGE_PAD_TOKEN, insert ImageChunks
+    chunks = []
+    current_tokens = []
+    img_idx = 0
+    for tok_id in token_ids:
+        if tok_id == IMAGE_PAD_TOKEN:
+            if current_tokens:
+                chunks.append(types.EncodedTextChunk(tokens=current_tokens))
+                current_tokens = []
+            img = images[img_idx] if img_idx < len(images) else images[-1]
+            expected = img_token_counts[img_idx] if img_idx < len(img_token_counts) else 64
+            chunks.append(types.ImageChunk(
+                data=pil_to_png_bytes(img),
+                format="png",
+                expected_tokens=expected,
+            ))
+            img_idx += 1
+        else:
+            current_tokens.append(tok_id)
+    if current_tokens:
+        chunks.append(types.EncodedTextChunk(tokens=current_tokens))
+
+    return types.ModelInput(chunks=chunks)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,14 +139,14 @@ logger = logging.getLogger(__name__)
 MAX_TURNS = int(os.environ.get("MAX_TURNS", 3))
 TOKENS_PER_TURN = int(os.environ.get("TOKENS_PER_TURN", 2048))
 USE_THINKING = os.environ.get("USE_THINKING", "0") == "1"
+NUM_PAGES = int(os.environ.get("NUM_PAGES", 32))  # Playwright pages for parallel rendering
 
 SYSTEM_PROMPT_AGENT = (
     "You are an expert at converting screenshots of web pages into HTML/CSS code. "
     "You may use Tailwind CSS, inline styles, or a <style> block. "
     "Wrap your code in ```html ... ```.\n\n"
-    "After each attempt, you will receive a diff image where red-highlighted regions "
-    "show where your output differs from the target. Use this feedback to improve "
-    "your output — fix the red areas and resubmit."
+    "After each attempt, you will see the target screenshot alongside your rendered output. "
+    "Analyze the visual differences and fix your HTML to better match the target."
 )
 
 def make_feedback_prompt(ssim_score: float, diff_pct: float) -> str:
@@ -119,7 +208,7 @@ def run_agent_rollout(
     final_reward = -1.0
 
     for turn in range(MAX_TURNS):
-        prompt = renderer.build_generation_prompt(convo)
+        prompt = build_vlm_prompt(convo)
 
         result = sampling_client.sample(
             prompt=prompt,
@@ -192,7 +281,7 @@ def run_agent_rollout(
         })
 
         # Sample analysis
-        analyze_prompt = renderer.build_generation_prompt(convo)
+        analyze_prompt = build_vlm_prompt(convo)
         analyze_result = sampling_client.sample(
             prompt=analyze_prompt, num_samples=1, sampling_params=sampling_params,
         ).result()
@@ -225,9 +314,10 @@ def main():
 
     # Setup
     tokenizer = get_tokenizer(MODEL)
-    image_processor = AutoImageProcessor.from_pretrained(MODEL, use_fast=True)
-    renderer_name = "qwen3_5" if USE_THINKING else RENDERER_NAME
-    renderer = renderers.get_renderer(renderer_name, tokenizer, image_processor=image_processor)
+    processor = AutoProcessor.from_pretrained(MODEL, trust_remote_code=True)
+    renderer_name = "qwen3" if USE_THINKING else RENDERER_NAME
+    renderer = renderers.get_renderer(renderer_name, tokenizer)
+    init_vlm(processor, tokenizer, disable_thinking=not USE_THINKING)
     logger.info(f"Thinking: {'enabled' if USE_THINKING else 'disabled'} (renderer: {renderer_name})")
 
     service_client = tinker.ServiceClient()
@@ -250,21 +340,32 @@ def main():
 
     pw = sync_playwright().start()
     browser = pw.chromium.launch()
-    reward_pages = [
+    # Create enough pages for parallel rendering across all rollouts
+    pages = [
         browser.new_page(viewport={"width": VIEWPORT_W, "height": VIEWPORT_H})
-        for _ in range(BATCH_SIZE)
+        for _ in range(NUM_PAGES)
     ]
 
-    logger.info(f"Config: GROUP_SIZE={GROUP_SIZE}, KL_BETA={KL_BETA}, MAX_TURNS={MAX_TURNS}")
+    logger.info(f"Config: GROUP_SIZE={GROUP_SIZE}, KL_BETA={KL_BETA}, MAX_TURNS={MAX_TURNS}, NUM_PAGES={NUM_PAGES}")
+
+    # Pipeline: get first sampling client, then overlap training with next batch's sampling
+    pending_train_futures = None  # (fwd_bwd_future, optim_future) from previous batch
 
     for batch_idx in range(n_batches):
         t_start = time.time()
         batch = dataset[batch_idx * BATCH_SIZE : (batch_idx + 1) * BATCH_SIZE]
 
         if SAVE_EVERY > 0 and batch_idx > 0 and batch_idx % SAVE_EVERY == 0:
+            # Must wait for previous training to finish before checkpointing
+            if pending_train_futures:
+                pending_train_futures[0].result()
+                pending_train_futures[1].result()
+                pending_train_futures = None
             logger.info(f"Saving checkpoint at batch {batch_idx}...")
             training_client.save_state(name=f"checkpoint-{batch_idx:04d}").result()
 
+        # Get sampling client — if we have pending training, submit before waiting
+        # so save_weights can be queued on the same clock cycle as optim_step
         sampling_client = training_client.save_weights_and_get_sampling_client()
 
         # Pre-extract reference info + viewport-sized render for diffs
@@ -272,152 +373,175 @@ def main():
         ref_pils = []
         ref_renders = []
         for i, item in enumerate(batch):
-            page = reward_pages[i % len(reward_pages)]
+            page = pages[i % len(pages)]
             ref_html = item.get("reference_html") or item["html"]
             ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
             ref_infos.append(ref_info)
-            # Viewport-sized render for model input + diff feedback
             ref_render = render_html_to_image(page, ref_html, size=max(VIEWPORT_W, VIEWPORT_H))
             ref_renders.append(ref_render)
             ref_pils.append(Image.fromarray(ref_render))
 
-        # Run multi-turn rollouts
+        # ── Turn 1: fire ALL samples in parallel ─────────────────────────
+        turn1_futures = []
+        initial_prompts = []
+        for idx in range(len(batch)):
+            prompt = build_vlm_prompt([
+                {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                {"role": "user", "content": [
+                    {"type": "image", "image": ref_pils[idx]},
+                    {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
+                ]},
+            ])
+            initial_prompts.append(prompt)
+            turn1_futures.append(sampling_client.sample(
+                prompt=prompt, num_samples=GROUP_SIZE, sampling_params=sampling_params,
+            ))
+
+        # Collect turn 1 results and compute rewards for all rollouts
+        # rollouts[flat_idx] = {tokens, logprobs, html, content, reward, done, convo, idx, g}
+        rollouts = []
+        for idx in range(len(batch)):
+            result = turn1_futures[idx].result()
+            for g, seq in enumerate(result.sequences):
+                flat_idx = len(rollouts)
+                page = pages[flat_idx % len(pages)]
+
+                tokens = list(seq.tokens)
+                logprobs = list(seq.logprobs)
+                parsed_msg, _ = renderer.parse_response(seq.tokens)
+                content = get_text_content(parsed_msg)
+                html = extract_html_from_response(content)
+                reward = -1.0
+
+                if html is not None:
+                    try:
+                        gen_info = extract_gen_info(page, html, size=IMG_SIZE)
+                        reward, _ = compute_reward_from_info(ref_infos[idx], gen_info)
+                    except Exception:
+                        pass
+
+                rollouts.append({
+                    "tokens": tokens, "logprobs": logprobs,
+                    "html": html, "content": content, "reward": reward,
+                    "done": html is None or reward > 0.9,
+                    "idx": idx, "g": g,
+                    "convo": [
+                        {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                        {"role": "user", "content": [
+                            {"type": "image", "image": ref_pils[idx]},
+                            {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
+                        ]},
+                    ],
+                })
+
+        logger.info(f"  Turn 1 done: {sum(1 for r in rollouts if r['done'])}/{len(rollouts)} already done")
+
+        # ── Turns 2+: parallel across ALL active rollouts ────────────────
+
+        for turn in range(1, MAX_TURNS):
+            active = [r for r in rollouts if not r["done"]]
+            if not active:
+                break
+            logger.info(f"  Turn {turn+1}: {len(active)} active rollouts")
+
+            # Phase A: render gen screenshots + fire analyze calls in parallel
+            analyze_futures = []
+            for r in active:
+                page = pages[rollouts.index(r) % len(pages)]
+                idx = r["idx"]
+
+                gen_render = render_html_to_image(page, r["html"], size=max(VIEWPORT_W, VIEWPORT_H))
+                gen_pil = Image.fromarray(gen_render)
+
+                r["convo"].append({"role": "assistant", "content": r["content"]})
+                r["convo"].append({"role": "user", "content": [
+                    {"type": "text", "text": "Here is the target screenshot:"},
+                    {"type": "image", "image": ref_pils[idx]},
+                    {"type": "text", "text": "Here is what your HTML currently renders as:"},
+                    {"type": "image", "image": gen_pil},
+                    {"type": "text", "text": (
+                        "Compare the two images. List the specific visual differences — "
+                        "wrong colors, missing elements, incorrect sizing, layout issues, "
+                        "wrong text. Be concise and specific."
+                    )},
+                ]})
+
+                analyze_prompt = build_vlm_prompt(r["convo"])
+                analyze_futures.append(sampling_client.sample(
+                    prompt=analyze_prompt, num_samples=1, sampling_params=sampling_params,
+                ))
+
+            # Collect ALL analyze results
+            for r, future in zip(active, analyze_futures):
+                result = future.result()
+                seq = result.sequences[0]
+                r["tokens"].extend(seq.tokens)
+                r["logprobs"].extend(seq.logprobs)
+
+                parsed_msg, _ = renderer.parse_response(seq.tokens)
+                analysis = get_text_content(parsed_msg)
+
+                r["convo"].append({"role": "assistant", "content": analysis})
+                r["convo"].append({"role": "user", "content": (
+                    "Now fix ALL the issues you identified. "
+                    "Output the complete corrected HTML in ```html ... ```."
+                )})
+
+            # Phase B: fire ALL fix calls in parallel
+            fix_futures = []
+            for r in active:
+                fix_prompt = build_vlm_prompt(r["convo"])
+                fix_futures.append(sampling_client.sample(
+                    prompt=fix_prompt, num_samples=1, sampling_params=sampling_params,
+                ))
+
+            # Collect ALL fix results + compute rewards
+            for r, future in zip(active, fix_futures):
+                result = future.result()
+                seq = result.sequences[0]
+                r["tokens"].extend(seq.tokens)
+                r["logprobs"].extend(seq.logprobs)
+
+                parsed_msg, _ = renderer.parse_response(seq.tokens)
+                content = get_text_content(parsed_msg)
+                html = extract_html_from_response(content)
+
+                r["content"] = content
+                r["html"] = html
+
+                if html is None:
+                    r["done"] = True
+                    continue
+
+                try:
+                    page = pages[rollouts.index(r) % len(pages)]
+                    gen_info = extract_gen_info(page, html, size=IMG_SIZE)
+                    r["reward"], _ = compute_reward_from_info(ref_infos[r["idx"]], gen_info)
+                except Exception:
+                    r["reward"] = -1.0
+                    r["done"] = True
+                    continue
+
+                if r["reward"] > 0.9:
+                    r["done"] = True
+
+        # ── Build training datums ────────────────────────────────────────
         datums: list[types.Datum] = []
         batch_rewards: list[float] = []
         batch_kl: list[float] = []
 
-        # Fire ALL turn-1 samples across all prompts at once
-        turn1_futures = []
-        initial_prompts_batch = []
+        # Group rollouts back by batch item
         for idx in range(len(batch)):
-            ref_pil = ref_pils[idx]
-            initial_prompt = renderer.build_generation_prompt([
-                {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": ref_pil},
-                        {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
-                    ],
-                },
-            ])
-            initial_prompts_batch.append(initial_prompt)
-            turn1_futures.append(sampling_client.sample(
-                prompt=initial_prompt, num_samples=GROUP_SIZE, sampling_params=sampling_params,
-            ))
-
-        for idx in tqdm(range(len(batch)), desc=f"Batch {batch_idx}"):
-            ref_info = ref_infos[idx]
-            ref_pil = ref_pils[idx]
-            ref_render = ref_renders[idx]
-            page = reward_pages[idx % len(reward_pages)]
-            initial_prompt = initial_prompts_batch[idx]
-
-            turn1_result = turn1_futures[idx].result()
-
-            # Process each rollout from turn 1, then continue individually for turns 2+
+            item_rollouts = [r for r in rollouts if r["idx"] == idx]
             rewards_G = []
             tokens_G = []
             logprobs_G = []
 
-            for g, seq in enumerate(turn1_result.sequences):
-                all_tokens = list(seq.tokens)
-                all_logprobs = list(seq.logprobs)
-
-                # Parse turn 1 HTML
-                parsed_msg, _ = renderer.parse_response(seq.tokens)
-                content = get_text_content(parsed_msg)
-                current_html = extract_html_from_response(content)
-                final_reward = -1.0
-
-                if current_html is not None:
-                    try:
-                        gen_info = extract_gen_info(page, current_html, size=IMG_SIZE)
-                        final_reward, _ = compute_reward_from_info(ref_info, gen_info)
-                    except Exception:
-                        pass
-
-                # Continue with turns 2+ if needed
-                if current_html is not None and final_reward < 0.9:
-                    convo = [
-                        {"role": "system", "content": SYSTEM_PROMPT_AGENT},
-                        {"role": "user", "content": [
-                            {"type": "image", "image": ref_pil},
-                            {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
-                        ]},
-                    ]
-
-                    for turn in range(1, MAX_TURNS):
-                        # Create diff
-                        gen_render = render_html_to_image(page, current_html, size=max(VIEWPORT_W, VIEWPORT_H))
-                        diff_img = make_diff_image(ref_render, gen_render, threshold=25)
-                        diff_pil = Image.fromarray(diff_img)
-
-                        from skimage.metrics import structural_similarity as ssim_fn
-                        ssim_score = ssim_fn(ref_render, gen_render, channel_axis=2, data_range=255) if ref_render.shape == gen_render.shape else 0.0
-                        diff_mask = np.any(np.abs(ref_render.astype(int) - gen_render.astype(int)) > 25, axis=2)
-                        diff_pct = diff_mask.sum() / diff_mask.size
-
-                        # Analyze step
-                        convo.append({"role": "assistant", "content": content})
-                        convo.append({"role": "user", "content": [
-                            {"type": "image", "image": ref_pil},
-                            {"type": "image", "image": diff_pil},
-                            {"type": "text", "text": (
-                                f"Visual similarity: {ssim_score:.0%} ({diff_pct:.0%} of pixels differ).\n\n"
-                                f"Above: target screenshot and diff image (red = differences).\n\n"
-                                f"List the specific visual differences — wrong colors, missing elements, "
-                                f"incorrect sizing, layout issues. Be concise."
-                            )},
-                        ]})
-
-                        analyze_prompt = renderer.build_generation_prompt(convo)
-                        analyze_result = sampling_client.sample(
-                            prompt=analyze_prompt, num_samples=1, sampling_params=sampling_params,
-                        ).result()
-                        analyze_seq = analyze_result.sequences[0]
-                        all_tokens.extend(analyze_seq.tokens)
-                        all_logprobs.extend(analyze_seq.logprobs)
-
-                        analyze_msg, _ = renderer.parse_response(analyze_seq.tokens)
-                        analysis = get_text_content(analyze_msg)
-
-                        # Fix step
-                        convo.append({"role": "assistant", "content": analysis})
-                        convo.append({"role": "user", "content": (
-                            "Now fix ALL the issues you identified. "
-                            "Output the complete corrected HTML in ```html ... ```."
-                        )})
-
-                        fix_prompt = renderer.build_generation_prompt(convo)
-                        fix_result = sampling_client.sample(
-                            prompt=fix_prompt, num_samples=1, sampling_params=sampling_params,
-                        ).result()
-                        fix_seq = fix_result.sequences[0]
-                        all_tokens.extend(fix_seq.tokens)
-                        all_logprobs.extend(fix_seq.logprobs)
-
-                        parsed_msg, _ = renderer.parse_response(fix_seq.tokens)
-                        content = get_text_content(parsed_msg)
-                        current_html = extract_html_from_response(content)
-
-                        if current_html is None:
-                            break
-
-                        try:
-                            gen_info = extract_gen_info(page, current_html, size=IMG_SIZE)
-                            final_reward, _ = compute_reward_from_info(ref_info, gen_info)
-                        except Exception:
-                            final_reward = -1.0
-                            break
-
-                        if final_reward > 0.9:
-                            break
-
-                tokens_G.append(all_tokens)
-                logprobs_G.append(all_logprobs)
-                kl = -sum(all_logprobs) / len(all_logprobs) if all_logprobs else 0.0
-                rewards_G.append(final_reward - KL_BETA * kl)
+            for r in item_rollouts:
+                kl = -sum(r["logprobs"]) / len(r["logprobs"]) if r["logprobs"] else 0.0
+                rewards_G.append(r["reward"] - KL_BETA * kl)
+                tokens_G.append(r["tokens"])
+                logprobs_G.append(r["logprobs"])
                 batch_kl.append(kl)
 
             mean_reward = sum(rewards_G) / len(rewards_G)
@@ -427,8 +551,7 @@ def main():
             if all(a == 0.0 for a in advantages_G):
                 continue
 
-            # Build training datums (initial_prompt already built above)
-
+            initial_prompt = initial_prompts[idx]
             for tokens, logprobs, advantage in zip(tokens_G, logprobs_G, advantages_G):
                 if not tokens:
                     continue
@@ -449,16 +572,24 @@ def main():
                     },
                 ))
 
-        # Training step
+        # Wait for previous batch's training to finish (if any)
+        if pending_train_futures:
+            pending_train_futures[0].result()
+            pending_train_futures[1].result()
+            pending_train_futures = None
+
+        # Training step — pipeline fwd_bwd + optim_step on same clock cycle
         if len(datums) == 0:
             logger.warning(f"Batch {batch_idx}: no datums, skipping")
             continue
 
-        training_client.forward_backward(
+        fwd_bwd_future = training_client.forward_backward(
             datums, loss_fn="ppo",
             loss_fn_config={"clip_low_threshold": PPO_CLIP_LOW, "clip_high_threshold": PPO_CLIP_HIGH},
-        ).result()
-        training_client.optim_step(adam_params).result()
+        )
+        optim_future = training_client.optim_step(adam_params)
+        # Don't wait — let next batch's sampling overlap with training
+        pending_train_futures = (fwd_bwd_future, optim_future)
 
         elapsed = time.time() - t_start
         mean_reward = sum(batch_rewards) / len(batch_rewards) if batch_rewards else 0.0
@@ -480,6 +611,11 @@ def main():
         metrics_file.flush()
 
     metrics_file.close()
+
+    # Drain any pending training futures
+    if pending_train_futures:
+        pending_train_futures[0].result()
+        pending_train_futures[1].result()
 
     # Save
     logger.info("Saving final checkpoint...")

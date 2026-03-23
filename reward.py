@@ -237,8 +237,9 @@ def extract_gen_info(page: Page, generated_html: str, size: int = 256) -> dict:
     render_html(page, generated_html)
     dom = extract_dom_info(page)
     screenshot_bytes = page.screenshot()
-    img = Image.open(io.BytesIO(screenshot_bytes)).convert("RGB").resize((size, size))
-    dom["image"] = np.array(img)
+    full_img = Image.open(io.BytesIO(screenshot_bytes)).convert("RGB")
+    dom["image_full"] = np.array(full_img)  # Full res for blank check
+    dom["image"] = np.array(full_img.resize((size, size)))  # 256x256 for SSIM
     return dom
 
 
@@ -467,10 +468,11 @@ def visual_similarity(ref_img: np.ndarray, gen_img: np.ndarray) -> float:
 
 def compute_reward_from_info(ref_info: dict, gen_info: dict) -> tuple[float, dict]:
     """
-    Compute reward: SSIM-anchored with text and color bonuses.
+    Compute reward: SSIM gated by content presence, plus text and color signals.
 
-    If it looks right visually (SSIM), it IS right. DOM signals are
-    bonuses for text accuracy and color fidelity, not vetoes.
+    SSIM is multiplied by a content gate so blank pages can't ride high SSIM
+    against light backgrounds. The gate opens smoothly as text/color appear.
+    No hard -1 penalties — the gradient is continuous everywhere.
     """
     details = {
         "ssim": visual_similarity(ref_info["image"], gen_info["image"]),
@@ -478,16 +480,19 @@ def compute_reward_from_info(ref_info: dict, gen_info: dict) -> tuple[float, dic
         "color": color_palette_similarity(ref_info["colors"], gen_info["colors"]),
     }
 
-    # 0.60 SSIM (full viewport, not cropped) + 0.25 text + 0.15 color
-    raw = 0.60 * details["ssim"] + 0.25 * details["text"] + 0.15 * details["color"]
+    # Content gate: SSIM only gets full credit when the page has content
+    # Blank page (text=0, color=0) → gate=0.2, SSIM contribution crushed
+    # Real attempt (text>0 or color>0) → gate opens toward 1.0
+    content = max(details["text"], details["color"])
+    content_gate = 0.2 + 0.8 * content
+    gated_ssim = details["ssim"] * content_gate
+
+    raw = 0.60 * gated_ssim + 0.25 * details["text"] + 0.15 * details["color"]
 
     # Scale to [-1, 1]
     reward = 2.0 * raw - 1.0
 
-    # Gate: blank page = -1 (prevents reward hacking)
-    if gen_info["image"].std() < 15:
-        reward = -1.0
-
+    details["content_gate"] = content_gate
     return float(reward), details
 
 

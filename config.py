@@ -5,11 +5,11 @@ import os
 # ── Model ─────────────────────────────────────────────────────────────────────
 MODEL = os.environ.get("MODEL", "Qwen/Qwen3.5-27B")
 LORA_RANK = int(os.environ.get("LORA_RANK", 32))
-RENDERER_NAME = "qwen3_5_disable_thinking"
+RENDERER_NAME = os.environ.get("RENDERER_NAME", "qwen3_5_disable_thinking")
 
 # ── Training ──────────────────────────────────────────────────────────────────
 BATCH_SIZE = int(os.environ.get("BATCH_SIZE", 8))
-GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 8))
+GROUP_SIZE = int(os.environ.get("GROUP_SIZE", 4))
 MAX_BATCHES = int(os.environ.get("MAX_BATCHES", 0))  # 0 = all
 LR = float(os.environ.get("LR", 1e-5))
 MAX_TOKENS = int(os.environ.get("MAX_TOKENS", 8192))
