@@ -103,45 +103,39 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 Model generates HTML → we render → model sees target vs output side-by-side → analyzes differences → fixes.
 
-### 4B Base vs RL (2 batches) — Mind2Web Real Websites
+### 4B Base (2 turns, analyze-fix) — Mind2Web Real Websites
 
 > **Experiment details:**
-> - Model: Qwen 3.5-4B (LoRA rank 32)
-> - Training: 2 batches (64 examples), BS=16, GS=2, 2 turns (analyze-fix)
-> - Reward: Content-gated SSIM (0.60) + text (0.25) + color (0.15)
-> - Data: Mind2Web landing pages (500 real websites)
-> - Eval: Same 10 examples, same seed, 1 turn
+> - Model: Qwen 3.5-4B base (no RL training)
+> - Eval: 10 Mind2Web real websites, 2 turns with analyze-fix
+> - Reference: Original website screenshots (not DOM re-renders)
+> - Result: **Avg SSIM 0.468, Avg reward -0.658**
 
-**ESPN** — Base generates blank page, RL generates proper nav bar
-| Reference | Base (4B) | RL (4B, 2 batches) |
-|-----------|-----------|-------------------|
-| ![ref](eval_output/m2w-4b-base/example_01/ref-render.png) | ![base](eval_output/m2w-4b-base/example_01/turn1.png) | ![rl](eval_output/m2w-4b-rl-v2/example_01/turn1.png) |
+**Resy** (SSIM 0.753)
+| Reference | Base 4B Output |
+|-----------|---------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![gen](eval_output/m2w-4b-base-2turns-v2/example_00/turn1.png) |
 
-**IKEA** — Both capture all text content, RL adds styled button
-| Reference | Base (4B) | RL (4B, 2 batches) |
-|-----------|-----------|-------------------|
-| ![ref](eval_output/m2w-4b-base/example_03/ref-render.png) | ![base](eval_output/m2w-4b-base/example_03/turn1.png) | ![rl](eval_output/m2w-4b-rl-v2/example_03/turn1.png) |
+**eBay** (SSIM 0.630)
+| Reference | Base 4B Output |
+|-----------|---------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![gen](eval_output/m2w-4b-base-2turns-v2/example_05/turn1.png) |
 
-**Borderfree** — Base produces styled layout, RL centers content
-| Reference | Base (4B) | RL (4B, 2 batches) |
-|-----------|-----------|-------------------|
-| ![ref](eval_output/m2w-4b-base/example_02/ref-render.png) | ![base](eval_output/m2w-4b-base/example_02/turn1.png) | ![rl](eval_output/m2w-4b-rl-v2/example_02/turn1.png) |
+| Example | Turn 1 SSIM | Turn 2 SSIM | Turn 1 Reward | Turn 2 Reward |
+|---------|------------|------------|---------------|---------------|
+| 1 (Resy) | 0.753 | 0.753 | -0.768 | -0.769 |
+| 2 | 0.409 | 0.356 | -0.710 | -0.744 |
+| 3 | 0.470 | 0.468 | -0.658 | -0.688 |
+| 4 | 0.496 | 0.496 | -0.472 | -0.472 |
+| 5 | 0.324 | 0.324 | -0.679 | -0.679 |
+| 6 (eBay) | 0.630 | 0.628 | -0.858 | -0.830 |
+| 7 | 0.551 | 0.552 | -0.879 | -0.878 |
+| 8 | 0.528 | 0.545 | -0.347 | -0.334 |
+| 9 | 0.352 | 0.352 | -0.422 | -0.422 |
+| 10 | 0.205 | 0.206 | -0.815 | -0.763 |
+| **Avg** | **0.472** | **0.468** | **-0.661** | **-0.658** |
 
-| Example | Base Reward | Base SSIM | RL Reward | RL SSIM | Delta |
-|---------|------------|----------|-----------|---------|-------|
-| 1 | 0.604 | 0.901 | -0.785 | 0.937 | -1.390 |
-| 2 | -0.775 | 0.960 | 0.236 | 0.940 | +1.011 |
-| 3 | -0.104 | 0.960 | 0.329 | 0.963 | +0.433 |
-| 4 | 0.314 | 0.886 | 0.429 | 0.892 | +0.115 |
-| 5 | 0.146 | 0.916 | -0.764 | 0.729 | -0.910 |
-| 6 | -0.067 | 0.825 | -0.806 | 0.890 | -0.739 |
-| 7 | 0.154 | 0.895 | -0.777 | 0.955 | -0.931 |
-| 8 | 0.542 | 0.878 | -0.241 | 0.746 | -0.783 |
-| 9 | 0.198 | 0.888 | 0.359 | 0.887 | +0.162 |
-| 10 | 0.683 | 0.927 | 0.487 | 0.923 | -0.196 |
-| **Avg** | **0.170** | **0.904** | **-0.153** | **0.886** | **-0.323** |
-
-*Note: RL model after only 2 batches. Several RL outputs have high SSIM (0.937, 0.955) but negative reward — the content gate penalizes pages with correct layout but missing text. Full 31-batch training run in progress.*
+*Note: Analyze-fix barely helps on base model (+0.003 reward). The model isn't trained to use visual feedback. RL training in progress to improve this.*
 
 ### GPT-5.4: Analyze-Fix vs Naive (10 turns)
 ```

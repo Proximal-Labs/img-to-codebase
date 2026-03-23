@@ -308,64 +308,237 @@ def main():
 
     all_results = []
 
-    for i, item in enumerate(samples):
-        ex_dir = os.path.join(eval_dir, f"example_{i:02d}")
-        os.makedirs(ex_dir, exist_ok=True)
+    if args.provider == "tinker":
+        # ── Parallel Tinker eval ─────────────────────────────────────────
+        from train_agent import build_vlm_prompt, get_text_content
 
-        ref_html = item.get("reference_html") or item["html"]
+        # Prep all examples
+        ex_dirs = []
+        ref_infos = []
+        ref_pils = []
+        ref_renders = []
+        for i, item in enumerate(samples):
+            ex_dir = os.path.join(eval_dir, f"example_{i:02d}")
+            os.makedirs(ex_dir, exist_ok=True)
+            ex_dirs.append(ex_dir)
 
-        # Use original screenshot if available (Mind2Web has real website screenshots)
-        # Fall back to re-rendering reference HTML (for WebSight/D2C which have proper CSS)
-        if item.get("screenshot") and os.path.exists(item["screenshot"]):
-            ref_pil_orig = Image.open(item["screenshot"]).convert("RGB")
-            ref_render = np.array(ref_pil_orig.resize((VIEWPORT_W, VIEWPORT_H)))
-            ref_pil = Image.fromarray(ref_render)
-            # Extract DOM info from the HTML for reward computation
-            ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
-            # Override image with the actual screenshot for SSIM
-            ref_info["image"] = np.array(ref_pil_orig.resize((IMG_SIZE, IMG_SIZE)))
-        else:
-            ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
-            render_html(page, ref_html)
-            ref_render = np.array(Image.open(io.BytesIO(page.screenshot())).convert("RGB"))
-            ref_pil = Image.fromarray(ref_render)
+            ref_html = item.get("reference_html") or item["html"]
+            if item.get("screenshot") and os.path.exists(item["screenshot"]):
+                ref_pil_orig = Image.open(item["screenshot"]).convert("RGB")
+                ref_render = np.array(ref_pil_orig.resize((VIEWPORT_W, VIEWPORT_H)))
+                ref_pil = Image.fromarray(ref_render)
+                ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
+                ref_info["image"] = np.array(ref_pil_orig.resize((IMG_SIZE, IMG_SIZE)))
+            else:
+                ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
+                render_html(page, ref_html)
+                ref_render = np.array(Image.open(io.BytesIO(page.screenshot())).convert("RGB"))
+                ref_pil = Image.fromarray(ref_render)
 
-        ref_pil.save(os.path.join(ex_dir, "ref-render.png"))
+            ref_pil.save(os.path.join(ex_dir, "ref-render.png"))
+            ref_infos.append(ref_info)
+            ref_pils.append(ref_pil)
+            ref_renders.append(ref_render)
 
-        log(f"\nExample {i+1}/{args.n} ({len(ref_html)} chars)")
+        # Turn 1: fire ALL in parallel
+        log(f"\nFiring {len(samples)} turn-1 prompts in parallel...")
+        turn1_futures = []
+        for i in range(len(samples)):
+            prompt = build_vlm_prompt([
+                {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                {"role": "user", "content": [
+                    {"type": "image", "image": ref_pils[i]},
+                    {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
+                ]},
+            ])
+            turn1_futures.append(sampling_client.sample(
+                prompt=prompt, num_samples=1, sampling_params=sampling_params,
+            ))
 
-        if args.provider == "openai":
+        # Collect turn 1 results
+        eval_states = []  # per-example state for multi-turn
+        for i in range(len(samples)):
+            result = turn1_futures[i].result()
+            seq = result.sequences[0]
+            parsed_msg, _ = renderer.parse_response(seq.tokens)
+            content = get_text_content(parsed_msg)
+            html = extract_html_from_response(content)
+
+            turn_result = {"turn": 1, "html": html, "reward": -1.0, "ssim": 0.0, "diff_pct": 1.0}
+
+            if html is not None:
+                try:
+                    gen_info = extract_gen_info(page, html, size=IMG_SIZE)
+                    reward, details = compute_reward_from_info(ref_infos[i], gen_info)
+                    gen_render = _viewport_screenshot(page, html)
+                    ssim_score = ssim_fn(ref_renders[i], gen_render, channel_axis=2, data_range=255) if ref_renders[i].shape == gen_render.shape else 0.0
+                    diff_mask = np.any(np.abs(ref_renders[i].astype(int) - gen_render.astype(int)) > 25, axis=2)
+                    diff_pct = diff_mask.sum() / diff_mask.size
+                    turn_result.update({"reward": reward, "ssim": ssim_score, "diff_pct": diff_pct, "details": details})
+                except Exception as e:
+                    turn_result["error"] = str(e)
+
+            log(f"  Example {i+1}/{len(samples)} Turn 1: reward={turn_result['reward']:.3f}  SSIM={turn_result['ssim']:.3f}  diff={turn_result['diff_pct']:.1%}")
+
+            eval_states.append({
+                "turns": [turn_result],
+                "html": html, "content": content,
+                "done": html is None or turn_result["reward"] > 0.9,
+                "convo": [
+                    {"role": "system", "content": SYSTEM_PROMPT_AGENT},
+                    {"role": "user", "content": [
+                        {"type": "image", "image": ref_pils[i]},
+                        {"type": "text", "text": "Generate the HTML/CSS that reproduces this screenshot."},
+                    ]},
+                ],
+            })
+
+        # Turns 2+: parallel across all active examples
+        for turn in range(1, args.turns):
+            active = [(i, s) for i, s in enumerate(eval_states) if not s["done"]]
+            if not active:
+                break
+            log(f"\nTurn {turn+1}: {len(active)} active examples")
+
+            # Phase A: fire analyze calls in parallel
+            analyze_futures = []
+            for i, s in active:
+                gen_render = _viewport_screenshot(page, s["html"])
+                gen_pil = Image.fromarray(gen_render)
+
+                s["convo"].append({"role": "assistant", "content": s["content"]})
+                s["convo"].append({"role": "user", "content": [
+                    {"type": "text", "text": "Here is the target screenshot:"},
+                    {"type": "image", "image": ref_pils[i]},
+                    {"type": "text", "text": "Here is what your HTML currently renders as:"},
+                    {"type": "image", "image": gen_pil},
+                    {"type": "text", "text": (
+                        "Compare the two images. List the specific visual differences — "
+                        "wrong colors, missing elements, incorrect sizing, layout issues. Be concise."
+                    )},
+                ]})
+
+                analyze_prompt = build_vlm_prompt(s["convo"])
+                analyze_futures.append(sampling_client.sample(
+                    prompt=analyze_prompt, num_samples=1, sampling_params=sampling_params,
+                ))
+
+            # Collect analyze, build fix prompts
+            for (i, s), future in zip(active, analyze_futures):
+                result = future.result()
+                parsed_msg, _ = renderer.parse_response(result.sequences[0].tokens)
+                analysis = get_text_content(parsed_msg)
+                s["turns"][-1]["analysis"] = analysis
+
+                s["convo"].append({"role": "assistant", "content": analysis})
+                s["convo"].append({"role": "user", "content": (
+                    "Now fix ALL the issues you identified. "
+                    "Output the complete corrected HTML in ```html ... ```."
+                )})
+
+            # Phase B: fire fix calls in parallel
+            fix_futures = []
+            for i, s in active:
+                fix_prompt = build_vlm_prompt(s["convo"])
+                fix_futures.append(sampling_client.sample(
+                    prompt=fix_prompt, num_samples=1, sampling_params=sampling_params,
+                ))
+
+            # Collect fix results
+            for (i, s), future in zip(active, fix_futures):
+                result = future.result()
+                parsed_msg, _ = renderer.parse_response(result.sequences[0].tokens)
+                content = get_text_content(parsed_msg)
+                html = extract_html_from_response(content)
+
+                turn_result = {"turn": turn + 1, "html": html, "reward": -1.0, "ssim": 0.0, "diff_pct": 1.0}
+
+                if html is not None:
+                    try:
+                        gen_info = extract_gen_info(page, html, size=IMG_SIZE)
+                        reward, details = compute_reward_from_info(ref_infos[i], gen_info)
+                        gen_render = _viewport_screenshot(page, html)
+                        ssim_score = ssim_fn(ref_renders[i], gen_render, channel_axis=2, data_range=255) if ref_renders[i].shape == gen_render.shape else 0.0
+                        diff_mask = np.any(np.abs(ref_renders[i].astype(int) - gen_render.astype(int)) > 25, axis=2)
+                        diff_pct = diff_mask.sum() / diff_mask.size
+                        turn_result.update({"reward": reward, "ssim": ssim_score, "diff_pct": diff_pct, "details": details})
+                    except Exception as e:
+                        turn_result["error"] = str(e)
+
+                s["turns"].append(turn_result)
+                s["html"] = html
+                s["content"] = content
+                s["done"] = html is None or turn_result["reward"] > 0.9
+
+                log(f"  Example {i+1}/{len(samples)} Turn {turn+1}: reward={turn_result['reward']:.3f}  SSIM={turn_result['ssim']:.3f}  diff={turn_result['diff_pct']:.1%}")
+
+        # Save all outputs
+        for i in range(len(samples)):
+            ex_dir = ex_dirs[i]
+            turns = eval_states[i]["turns"]
+
+            for t in turns:
+                turn_num = t["turn"]
+                if t.get("html"):
+                    with open(os.path.join(ex_dir, f"turn{turn_num}.html"), "w") as f:
+                        f.write(t["html"])
+                    render_html_to_file(page, t["html"], os.path.join(ex_dir, f"turn{turn_num}.png"), full_page=False)
+
+            final_turn = turns[-1] if turns else {"reward": -1.0}
+            with open(os.path.join(ex_dir, "meta.json"), "w") as f:
+                json.dump({"turns": turns, "final_reward": final_turn["reward"]}, f, indent=2, default=str)
+
+            all_results.append({
+                "example": i,
+                "n_turns": len(turns),
+                "rewards": [t["reward"] for t in turns],
+                "ssims": [t["ssim"] for t in turns],
+                "final_reward": final_turn["reward"],
+            })
+
+    else:
+        # ── Sequential OpenAI eval (unchanged) ───────────────────────────
+        for i, item in enumerate(samples):
+            ex_dir = os.path.join(eval_dir, f"example_{i:02d}")
+            os.makedirs(ex_dir, exist_ok=True)
+
+            ref_html = item.get("reference_html") or item["html"]
+            if item.get("screenshot") and os.path.exists(item["screenshot"]):
+                ref_pil_orig = Image.open(item["screenshot"]).convert("RGB")
+                ref_render = np.array(ref_pil_orig.resize((VIEWPORT_W, VIEWPORT_H)))
+                ref_pil = Image.fromarray(ref_render)
+                ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
+                ref_info["image"] = np.array(ref_pil_orig.resize((IMG_SIZE, IMG_SIZE)))
+            else:
+                ref_info = extract_ref_info(page, ref_html, size=IMG_SIZE)
+                render_html(page, ref_html)
+                ref_render = np.array(Image.open(io.BytesIO(page.screenshot())).convert("RGB"))
+                ref_pil = Image.fromarray(ref_render)
+
+            ref_pil.save(os.path.join(ex_dir, "ref-render.png"))
+            log(f"\nExample {i+1}/{args.n} ({len(ref_html)} chars)")
+
             turns = run_openai_agent(client, args.openai_model, ref_pil, ref_render, ref_info, page, args.turns)
-        else:
-            turns = run_tinker_agent(sampling_client, renderer, ref_pil, ref_render, ref_info, page, args.turns, sampling_params)
 
-        # Save per-turn outputs
-        for t in turns:
-            turn_num = t["turn"]
-            if t["html"]:
-                with open(os.path.join(ex_dir, f"turn{turn_num}.html"), "w") as f:
-                    f.write(t["html"])
-                render_html_to_file(page, t["html"], os.path.join(ex_dir, f"turn{turn_num}.png"), full_page=False)
+            for t in turns:
+                turn_num = t["turn"]
+                if t["html"]:
+                    with open(os.path.join(ex_dir, f"turn{turn_num}.html"), "w") as f:
+                        f.write(t["html"])
+                    render_html_to_file(page, t["html"], os.path.join(ex_dir, f"turn{turn_num}.png"), full_page=False)
+                log(f"  Turn {turn_num}: reward={t['reward']:.3f}  SSIM={t['ssim']:.3f}  diff={t['diff_pct']:.1%}")
 
-                # Save diff
-                gen_render = render_html_to_image(page, t["html"], size=max(VIEWPORT_W, VIEWPORT_H))
-                diff_img = make_diff_image(ref_render, gen_render, threshold=25)
-                Image.fromarray(diff_img).save(os.path.join(ex_dir, f"diff{turn_num}.png"))
+            final_turn = turns[-1] if turns else {"reward": -1.0}
+            with open(os.path.join(ex_dir, "meta.json"), "w") as f:
+                json.dump({"turns": turns, "final_reward": final_turn["reward"]}, f, indent=2, default=str)
 
-            log(f"  Turn {turn_num}: reward={t['reward']:.3f}  SSIM={t['ssim']:.3f}  diff={t['diff_pct']:.1%}")
-
-        # Save metadata
-        final_turn = turns[-1] if turns else {"reward": -1.0}
-        with open(os.path.join(ex_dir, "meta.json"), "w") as f:
-            json.dump({"turns": turns, "final_reward": final_turn["reward"]}, f, indent=2, default=str)
-
-        all_results.append({
-            "example": i,
-            "n_turns": len(turns),
-            "rewards": [t["reward"] for t in turns],
-            "ssims": [t["ssim"] for t in turns],
-            "final_reward": final_turn["reward"],
-        })
+            all_results.append({
+                "example": i,
+                "n_turns": len(turns),
+                "rewards": [t["reward"] for t in turns],
+                "ssims": [t["ssim"] for t in turns],
+                "final_reward": final_turn["reward"],
+            })
 
     # Summary
     log(f"\n{'='*60}")
