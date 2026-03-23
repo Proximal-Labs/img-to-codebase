@@ -29,29 +29,7 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 ## 2. Task 1: One-Shot Screenshot → HTML
 
-### 4B Base Model on Real Websites
-
-**Resy (SSIM 0.816)** — best result
-| Reference | Generated |
-|-----------|-----------|
-| ![ref](eval_output/single_image_rl/4b-base-simple/example_00/ref.png) | ![gen](eval_output/single_image_rl/4b-base-simple/example_00/gen.png) |
-
-**eBay (SSIM 0.727)**
-| Reference | Generated |
-|-----------|-----------|
-| ![ref](eval_output/single_image_rl/4b-base-simple/example_05/ref.png) | ![gen](eval_output/single_image_rl/4b-base-simple/example_05/gen.png) |
-
-**IKEA (SSIM 0.580)**
-| Reference | Generated |
-|-----------|-----------|
-| ![ref](eval_output/single_image_rl/4b-base-simple/example_03/ref.png) | ![gen](eval_output/single_image_rl/4b-base-simple/example_03/gen.png) |
-
-**SoundCloud (SSIM 0.206)** — hardest
-| Reference | Generated |
-|-----------|-----------|
-| ![ref](eval_output/single_image_rl/4b-base-simple/example_09/ref.png) | ![gen](eval_output/single_image_rl/4b-base-simple/example_09/gen.png) |
-
-### After 10 Batches RL Training
+### After 10 Batches RL Training (4B on Mind2Web Real Websites)
 
 **SoundCloud: 0.206 → 0.545 (+0.339!)** — biggest improvement
 | Reference | Base (SSIM 0.206) | RL Batch 10 (SSIM 0.545) |
@@ -62,6 +40,37 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 | Reference | Base (SSIM 0.816) | RL Batch 10 (SSIM 0.849) |
 |-----------|-------------------|--------------------------|
 | ![ref](eval_output/single_image_rl/4b-base-simple/example_00/ref.png) | ![base](eval_output/single_image_rl/4b-base-simple/example_00/gen.png) | ![rl](eval_output/single_image_rl/4b-simple-batch10/example_00/gen.png) |
+
+**Under Armour: 0.520 → 0.527 (+0.007)**
+| Reference | Base (SSIM 0.520) | RL Batch 10 (SSIM 0.527) |
+|-----------|-------------------|--------------------------|
+| ![ref](eval_output/single_image_rl/4b-base-simple/example_02/ref.png) | ![base](eval_output/single_image_rl/4b-base-simple/example_02/gen.png) | ![rl](eval_output/single_image_rl/4b-simple-batch10/example_02/gen.png) |
+
+**eBay: 0.727 → 0.603 (-0.124)** — regressed
+| Reference | Base (SSIM 0.727) | RL Batch 10 (SSIM 0.603) |
+|-----------|-------------------|--------------------------|
+| ![ref](eval_output/single_image_rl/4b-base-simple/example_05/ref.png) | ![base](eval_output/single_image_rl/4b-base-simple/example_05/gen.png) | ![rl](eval_output/single_image_rl/4b-simple-batch10/example_05/gen.png) |
+
+**Carnival: 0.588 → 0.463 (-0.125)** — regressed
+| Reference | Base (SSIM 0.588) | RL Batch 10 (SSIM 0.463) |
+|-----------|-------------------|--------------------------|
+| ![ref](eval_output/single_image_rl/4b-base-simple/example_06/ref.png) | ![base](eval_output/single_image_rl/4b-base-simple/example_06/gen.png) | ![rl](eval_output/single_image_rl/4b-simple-batch10/example_06/gen.png) |
+
+| Site | Base SSIM | RL SSIM | Delta |
+|------|-----------|---------|-------|
+| Resy | 0.816 | **0.849** | +0.033 |
+| FoxSports | 0.473 | 0.381 | -0.092 |
+| UnderArmour | 0.520 | **0.527** | +0.007 |
+| IKEA | 0.580 | 0.480 | -0.100 |
+| Yelp | 0.468 | 0.429 | -0.039 |
+| eBay | 0.727 | 0.603 | -0.124 |
+| Carnival | 0.588 | 0.463 | -0.125 |
+| Rentalcars | 0.564 | 0.478 | -0.086 |
+| Viator | 0.334 | **0.376** | +0.042 |
+| SoundCloud | 0.206 | **0.545** | +0.339 |
+| **Average** | **0.528** | **0.513** | **-0.015** |
+
+*Note: batch 10 model was trained with 2K token limit (HTML cutoff issues) and without blank page penalty. Later runs fix both.*
 
 ---
 
