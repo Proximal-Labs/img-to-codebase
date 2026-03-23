@@ -29,7 +29,14 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 ## 2. Task 1: One-Shot Screenshot → HTML
 
-### After 10 Batches RL Training (4B on Mind2Web Real Websites)
+### After 10 Batches RL Training
+
+> **Experiment details:**
+> - Model: Qwen 3.5-4B (LoRA rank 32)
+> - Reward: 0.60 SSIM (content-cropped 256x256) + 0.25 text match + 0.15 color match
+> - Context: 2048 tokens max
+> - Data: WebSight v2 (not Mind2Web — this was before we switched datasets)
+> - Note: 2K token limit caused HTML cutoff on some examples. Reward used content-cropped SSIM which diverged from full-viewport SSIM.
 
 **SoundCloud: 0.206 → 0.545 (+0.339!)** — biggest improvement
 | Reference | Base (SSIM 0.206) | RL Batch 10 (SSIM 0.545) |
