@@ -105,25 +105,25 @@ Model generates HTML → sees target vs its output side-by-side → analyzes dif
 
 > **Setup:** Same base 4B, 2 turns with analyze-fix step. No RL training — testing if the base model can self-correct.
 
-**Resy** (SSIM 0.753)
-| Reference | Base Turn 1 |
-|-----------|------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![t1](eval_output/m2w-4b-base-2turns-v2/example_00/turn1.png) |
+**Resy** (Turn 2 SSIM 0.753)
+| Reference | Base Turn 2 (after analyze-fix) |
+|-----------|-------------------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_00/turn2.png) |
 
-**eBay** (SSIM 0.630)
-| Reference | Base Turn 1 |
-|-----------|------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![t1](eval_output/m2w-4b-base-2turns-v2/example_05/turn1.png) |
+**eBay** (Turn 2 SSIM 0.628)
+| Reference | Base Turn 2 (after analyze-fix) |
+|-----------|-------------------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_05/turn2.png) |
 
-**UnderArmour** (SSIM 0.470)
-| Reference | Base Turn 1 |
-|-----------|------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_02/ref-render.png) | ![t1](eval_output/m2w-4b-base-2turns-v2/example_02/turn1.png) |
+**UnderArmour** (Turn 2 SSIM 0.468)
+| Reference | Base Turn 2 (after analyze-fix) |
+|-----------|-------------------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_02/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_02/turn2.png) |
 
-**Rentalcars** (SSIM 0.528)
-| Reference | Base Turn 1 |
-|-----------|------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_07/ref-render.png) | ![t1](eval_output/m2w-4b-base-2turns-v2/example_07/turn1.png) |
+**Rentalcars** (Turn 2 SSIM 0.545)
+| Reference | Base Turn 2 (after analyze-fix) |
+|-----------|-------------------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_07/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_07/turn2.png) |
 
 | # | Website | Turn 1 SSIM | Turn 2 SSIM | Delta |
 |---|---------|------------|------------|-------|
