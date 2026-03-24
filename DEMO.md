@@ -102,40 +102,6 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 Model generates HTML → we render → model sees target vs output side-by-side → analyzes differences → fixes.
 
-### 4B Base (2 turns, analyze-fix) — Mind2Web Real Websites
-
-> **Experiment details:**
-> - Model: Qwen 3.5-4B base (no RL training)
-> - Eval: 10 Mind2Web real websites, 2 turns with analyze-fix
-> - Reference: Original website screenshots (not DOM re-renders)
-> - Result: **Avg SSIM 0.468, Avg reward -0.658**
-
-**Resy** (SSIM 0.753)
-| Reference | Base 4B Output |
-|-----------|---------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![gen](eval_output/m2w-4b-base-2turns-v2/example_00/turn1.png) |
-
-**eBay** (SSIM 0.630)
-| Reference | Base 4B Output |
-|-----------|---------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![gen](eval_output/m2w-4b-base-2turns-v2/example_05/turn1.png) |
-
-| Example | Turn 1 SSIM | Turn 2 SSIM | Turn 1 Reward | Turn 2 Reward |
-|---------|------------|------------|---------------|---------------|
-| 1 (Resy) | 0.753 | 0.753 | -0.768 | -0.769 |
-| 2 | 0.409 | 0.356 | -0.710 | -0.744 |
-| 3 | 0.470 | 0.468 | -0.658 | -0.688 |
-| 4 | 0.496 | 0.496 | -0.472 | -0.472 |
-| 5 | 0.324 | 0.324 | -0.679 | -0.679 |
-| 6 (eBay) | 0.630 | 0.628 | -0.858 | -0.830 |
-| 7 | 0.551 | 0.552 | -0.879 | -0.878 |
-| 8 | 0.528 | 0.545 | -0.347 | -0.334 |
-| 9 | 0.352 | 0.352 | -0.422 | -0.422 |
-| 10 | 0.205 | 0.206 | -0.815 | -0.763 |
-| **Avg** | **0.472** | **0.468** | **-0.661** | **-0.658** |
-
-*Note: Analyze-fix barely helps on base model (+0.003 reward). The model isn't trained to use visual feedback.*
-
 ### 4B RL (10 batches, single-shot) vs Base — Mind2Web
 
 > **Experiment details:**
