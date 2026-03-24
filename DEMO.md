@@ -203,6 +203,7 @@ The model saw all flow screenshots and generated HTML that matches the initial s
 |-------|-----------------|---------------|
 | GPT-5.4 | **0.670** | **0.560** |
 | 4B Base | 0.413 | 0.421 |
+| 4B RL (31 batches) | 0.401 | **0.440** |
 
 ---
 
