@@ -49,28 +49,25 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 
 ---
 
-## 3. Task 2: Screenshot → HTML, Single-Shot + Multi-Turn
+## 3. Task 2: Single-Shot Screenshot → HTML (4B on Mind2Web)
 
-### 4B Base vs RL (10 batches, single-shot) — Mind2Web
+Base 4B vs RL-trained 4B (10 batches). Both single-shot (1 turn, no analyze-fix). Same 10 Mind2Web websites, same seed.
 
-> **Experiment details:**
-> - Model: Qwen 3.5-4B, LoRA rank 32, 10 batches RL (BS=16, GS=2)
-> - Reward: Pure SSIM (training), content-gated SSIM (eval)
-> - Data: Mind2Web landing pages, 8K token limit
+> **Setup:** Qwen 3.5-4B, LoRA rank 32. RL trained with `train_simple.py` (pure SSIM reward, BS=16, GS=2, 8K tokens). Eval on original website screenshots.
 
-**Resy** — RL adds styled button, Climbing/Top Rated cards
-| Reference | Base | RL Batch 10 |
-|-----------|------|-------------|
+**Resy** — RL adds styled "MORE ABOUT RESY" button, Climbing/Top Rated cards
+| Reference | Base (1 turn) | RL Batch 10 (1 turn) |
+|-----------|--------------|---------------------|
 | ![ref](eval_output/m2w-4b-base-1turn/example_00/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_00/turn1.png) | ![rl](eval_output/m2w-simple-batch10/example_00/turn1.png) |
 
 **eBay** — RL gets teal hero section, brand cards layout
-| Reference | Base | RL Batch 10 |
-|-----------|------|-------------|
+| Reference | Base (1 turn) | RL Batch 10 (1 turn) |
+|-----------|--------------|---------------------|
 | ![ref](eval_output/m2w-4b-base-1turn/example_05/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_05/turn1.png) | ![rl](eval_output/m2w-simple-batch10/example_05/turn1.png) |
 
-**Rentalcars** — RL produces blue gradient + search form (base missed entirely)
-| Reference | Base | RL Batch 10 |
-|-----------|------|-------------|
+**Rentalcars** — RL produces blue gradient + search form (biggest improvement, +0.177 SSIM)
+| Reference | Base (1 turn) | RL Batch 10 (1 turn) |
+|-----------|--------------|---------------------|
 | ![ref](eval_output/m2w-4b-base-1turn/example_07/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_07/turn1.png) | ![rl](eval_output/m2w-simple-batch10/example_07/turn1.png) |
 
 | # | Website | Base SSIM | RL SSIM | Delta |
@@ -84,10 +81,39 @@ Real screenshots from Resy, eBay, ESPN, IKEA, United Airlines, etc.
 | 7 | Carnival | 0.550 | 0.387 | -0.163 |
 | 8 | Rentalcars | 0.396 | 0.573 | **+0.177** |
 | 9 | Viator | 0.322 | 0.328 | +0.006 |
-| 10 | SoundCloud | 0.208 | 0.228 | +0.020 |
+| 10 | SoundCloud | 0.610 | 0.228 | -0.383 |
 | **Avg** | | **0.536** | **0.472** | **-0.064** |
 
-*Mixed results after 10 batches — some sites improve significantly (Rentalcars +0.177) while others regress. Training uses pure SSIM reward but eval uses content-gated SSIM, causing mismatch. Multi-turn agent training (with matching reward) in progress.*
+---
+
+## 4. Task 3: Multi-Turn Analyze-Fix Agent (4B on Mind2Web)
+
+Model generates HTML → sees target vs its output side-by-side → analyzes differences → fixes. Same 10 Mind2Web websites as Task 2.
+
+### Base 4B (2 turns, analyze-fix)
+
+> **Setup:** Same base 4B, 2 turns with analyze-fix step. No RL training — testing if the base model can self-correct.
+
+**Resy** — Turn 1 vs Turn 2 (SSIM 0.753 → 0.753, no change)
+| Reference | Base Turn 1 | Base Turn 2 |
+|-----------|------------|------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![t1](eval_output/m2w-4b-base-2turns-v2/example_00/turn1.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_00/turn2.png) |
+
+| # | Website | Turn 1 SSIM | Turn 2 SSIM | Delta |
+|---|---------|------------|------------|-------|
+| 1 | Resy | 0.753 | 0.753 | +0.000 |
+| 2 | FoxSports | 0.409 | 0.356 | -0.054 |
+| 3 | UnderArmour | 0.470 | 0.468 | -0.002 |
+| 4 | IKEA | 0.496 | 0.496 | +0.000 |
+| 5 | Yelp | 0.324 | 0.324 | +0.000 |
+| 6 | eBay | 0.630 | 0.628 | -0.002 |
+| 7 | Carnival | 0.551 | 0.552 | +0.001 |
+| 8 | Rentalcars | 0.528 | 0.545 | +0.017 |
+| 9 | Viator | 0.352 | 0.352 | +0.000 |
+| 10 | SoundCloud | 0.205 | 0.206 | +0.001 |
+| **Avg** | | **0.472** | **0.468** | **-0.004** |
+
+*Analyze-fix barely helps on base model — the model isn't trained to use visual feedback. RL training with `train_agent.py` in progress to improve this.*
 
 ---
 
