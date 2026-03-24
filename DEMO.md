@@ -105,41 +105,42 @@ Model generates HTML → sees target vs its output side-by-side → analyzes dif
 
 > **Setup:** Same base 4B, 2 turns with analyze-fix step. No RL training — testing if the base model can self-correct.
 
-**Resy** (Turn 2 SSIM 0.753)
-| Reference | Base Turn 2 (after analyze-fix) |
-|-----------|-------------------------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_00/turn2.png) |
+**Resy**
+| Reference | Base Turn 2 | RL Batch 10 Turn 2 |
+|-----------|------------|-------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_00/ref-render.png) | ![base](eval_output/m2w-4b-base-2turns-v2/example_00/turn2.png) | ![rl](eval_output/m2w-agent-v5-batch10/example_00/turn2.png) |
 
-**eBay** (Turn 2 SSIM 0.628)
-| Reference | Base Turn 2 (after analyze-fix) |
-|-----------|-------------------------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_05/turn2.png) |
+**eBay**
+| Reference | Base Turn 2 | RL Batch 10 Turn 2 |
+|-----------|------------|-------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_05/ref-render.png) | ![base](eval_output/m2w-4b-base-2turns-v2/example_05/turn2.png) | ![rl](eval_output/m2w-agent-v5-batch10/example_05/turn2.png) |
 
-**UnderArmour** (Turn 2 SSIM 0.468)
-| Reference | Base Turn 2 (after analyze-fix) |
-|-----------|-------------------------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_02/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_02/turn2.png) |
+**Rentalcars**
+| Reference | Base Turn 2 | RL Batch 10 Turn 2 |
+|-----------|------------|-------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_07/ref-render.png) | ![base](eval_output/m2w-4b-base-2turns-v2/example_07/turn2.png) | ![rl](eval_output/m2w-agent-v5-batch10/example_07/turn2.png) |
 
-**Rentalcars** (Turn 2 SSIM 0.545)
-| Reference | Base Turn 2 (after analyze-fix) |
-|-----------|-------------------------------|
-| ![ref](eval_output/m2w-4b-base-2turns-v2/example_07/ref-render.png) | ![t2](eval_output/m2w-4b-base-2turns-v2/example_07/turn2.png) |
+**SoundCloud** — Biggest improvement: 0.206 → 0.600
+| Reference | Base Turn 2 | RL Batch 10 Turn 2 |
+|-----------|------------|-------------------|
+| ![ref](eval_output/m2w-4b-base-2turns-v2/example_09/ref-render.png) | ![base](eval_output/m2w-4b-base-2turns-v2/example_09/turn2.png) | ![rl](eval_output/m2w-agent-v5-batch10/example_09/turn2.png) |
 
-| # | Website | Turn 1 SSIM | Turn 2 SSIM | Delta |
-|---|---------|------------|------------|-------|
-| 1 | Resy | 0.753 | 0.753 | +0.000 |
-| 2 | FoxSports | 0.409 | 0.356 | -0.054 |
-| 3 | UnderArmour | 0.470 | 0.468 | -0.002 |
-| 4 | IKEA | 0.496 | 0.496 | +0.000 |
-| 5 | Yelp | 0.324 | 0.324 | +0.000 |
-| 6 | eBay | 0.630 | 0.628 | -0.002 |
-| 7 | Carnival | 0.551 | 0.552 | +0.001 |
-| 8 | Rentalcars | 0.528 | 0.545 | +0.017 |
-| 9 | Viator | 0.352 | 0.352 | +0.000 |
-| 10 | SoundCloud | 0.205 | 0.206 | +0.001 |
-| **Avg** | | **0.472** | **0.468** | **-0.004** |
+| # | Website | Base Turn 2 | RL Turn 2 | Delta |
+|---|---------|------------|-----------|-------|
+| 1 | Resy | 0.753 | 0.754 | +0.001 |
+| 2 | FoxSports | 0.356 | 0.433 | +0.077 |
+| 3 | UnderArmour | 0.468 | 0.402 | -0.066 |
+| 4 | IKEA | 0.496 | 0.501 | +0.005 |
+| 5 | Yelp | 0.324 | 0.318 | -0.005 |
+| 6 | eBay | 0.628 | 0.643 | +0.015 |
+| 7 | Carnival | 0.552 | 0.487 | -0.065 |
+| 8 | Rentalcars | 0.545 | 0.583 | +0.038 |
+| 9 | Viator | 0.352 | 0.391 | +0.039 |
+| 10 | SoundCloud | 0.206 | 0.600 | **+0.393** |
+| **Avg SSIM** | | **0.468** | **0.511** | **+0.043** |
+| **Avg Reward** | | **-0.658** | **-0.650** | **+0.008** |
 
-*Analyze-fix barely helps on base model — the model isn't trained to use visual feedback. RL training with `train_agent.py` in progress to improve this.*
+*RL model learns to use analyze-fix: turn 1→turn 2 improves SSIM by +0.045. Base model shows no improvement. SoundCloud improved dramatically (+0.393).*
 
 ---
 
