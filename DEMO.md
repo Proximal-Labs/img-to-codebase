@@ -70,6 +70,16 @@ Base 4B vs RL-trained 4B (10 batches). Both single-shot (1 turn, no analyze-fix)
 |-----------|--------------|-------------|-------------|
 | ![ref](eval_output/m2w-4b-base-1turn/example_05/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_05/turn1.png) | ![rl10](eval_output/m2w-simple-batch10/example_05/turn1.png) | ![rl20](eval_output/m2w-simple-batch20/example_05/turn1.png) |
 
+**IKEA** — Batch 20 generates product cards with pricing
+| Reference | Base (1 turn) | RL Batch 10 | RL Batch 20 |
+|-----------|--------------|-------------|-------------|
+| ![ref](eval_output/m2w-4b-base-1turn/example_03/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_03/turn1.png) | ![rl10](eval_output/m2w-simple-batch10/example_03/turn1.png) | ![rl20](eval_output/m2w-simple-batch20/example_03/turn1.png) |
+
+**Carnival** — Batch 20 produces countdown timer + room grid with branding colors
+| Reference | Base (1 turn) | RL Batch 10 | RL Batch 20 |
+|-----------|--------------|-------------|-------------|
+| ![ref](eval_output/m2w-4b-base-1turn/example_06/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_06/turn1.png) | ![rl10](eval_output/m2w-simple-batch10/example_06/turn1.png) | ![rl20](eval_output/m2w-simple-batch20/example_06/turn1.png) |
+
 | # | Website | Base | RL Batch 10 | RL Batch 20 |
 |---|---------|------|------------|------------|
 | 1 | Resy | 0.745 | 0.743 | 0.738 |
