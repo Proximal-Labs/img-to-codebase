@@ -70,19 +70,20 @@ Base 4B vs RL-trained 4B (10 batches). Both single-shot (1 turn, no analyze-fix)
 |-----------|--------------|---------------------|
 | ![ref](eval_output/m2w-4b-base-1turn/example_07/ref-render.png) | ![base](eval_output/m2w-4b-base-1turn/example_07/turn1.png) | ![rl](eval_output/m2w-simple-batch10/example_07/turn1.png) |
 
-| # | Website | Base SSIM | RL SSIM | Delta |
-|---|---------|----------|---------|-------|
-| 1 | Resy | 0.745 | 0.743 | -0.002 |
-| 2 | FoxSports | 0.497 | 0.395 | -0.102 |
-| 3 | UnderArmour | 0.533 | 0.429 | -0.104 |
-| 4 | IKEA | 0.518 | 0.542 | +0.024 |
-| 5 | Yelp | 0.471 | 0.474 | +0.003 |
-| 6 | eBay | 0.716 | 0.627 | -0.089 |
-| 7 | Carnival | 0.550 | 0.387 | -0.163 |
-| 8 | Rentalcars | 0.396 | 0.573 | **+0.177** |
-| 9 | Viator | 0.322 | 0.328 | +0.006 |
-| 10 | SoundCloud | 0.610 | 0.228 | -0.383 |
-| **Avg** | | **0.536** | **0.472** | **-0.064** |
+| # | Website | Base | RL Batch 10 | RL Batch 20 |
+|---|---------|------|------------|------------|
+| 1 | Resy | 0.745 | 0.743 | 0.738 |
+| 2 | FoxSports | 0.497 | 0.395 | 0.416 |
+| 3 | UnderArmour | 0.533 | 0.429 | 0.414 |
+| 4 | IKEA | 0.518 | 0.542 | 0.498 |
+| 5 | Yelp | 0.471 | 0.474 | 0.366 |
+| 6 | eBay | 0.716 | 0.627 | 0.655 |
+| 7 | Carnival | 0.550 | 0.387 | 0.544 |
+| 8 | Rentalcars | 0.396 | 0.573 | 0.436 |
+| 9 | Viator | 0.322 | 0.328 | 0.319 |
+| 10 | SoundCloud | 0.610 | 0.228 | 0.199 |
+| **Avg SSIM** | | **0.536** | **0.472** | **0.459** |
+| **Avg Reward** | | **-0.677** | **-0.698** | **-0.599** |
 
 ---
 
@@ -149,6 +150,25 @@ The model saw all flow screenshots and generated HTML that matches the initial s
 |-----------|-------------------|
 | ![ref](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_04/step_0_ref.png) | ![gen](eval_output/flow_interactive/mind2web-gpt54-flow-16k/task_04/step_0_gen.png) |
 
+### 4B Base Flow Eval (2 turns, analyze-fix)
+
+> **Setup:** Qwen 3.5-4B base (no RL), 5 Mind2Web tasks with action sequences, 2 turns with analyze-fix. Model sees flow screenshots, generates interactive HTML/JS, we run actions via Playwright and compare per-step SSIM.
+
+| Task | Website | Initial SSIM | Avg Step SSIM | Actions |
+|------|---------|-------------|---------------|---------|
+| 1 | sports.yahoo | 0.414 | 0.383 | 4 |
+| 2 | underarmour | 0.472 | 0.528 | 16 |
+| 3 | rottentomatoes | 0.628 | 0.643 | 5 |
+| 4 | sports.yahoo | 0.174 | 0.180 | 3 |
+| 5 | sports.yahoo | 0.378 | 0.373 | 2 |
+| **Avg** | | **0.413** | **0.421** | |
+
+Comparison with GPT-5.4:
+
+| Model | Avg Initial SSIM | Avg Step SSIM |
+|-------|-----------------|---------------|
+| GPT-5.4 | **0.670** | **0.560** |
+| 4B Base | 0.413 | 0.421 |
 
 ---
 
